@@ -10,6 +10,7 @@ INSTALACIÓN:
 
 CONTROLES:
   ESPACIO         → Play / Pausa (con countdown 4-3-2-1)
+  C               → Activar/desactivar countdown
   R               → Reiniciar
   ↑ / ↓          → Tempo ±5 BPM
   , / .           → Offset MP3 ±0.05 s  (fino)
@@ -476,9 +477,10 @@ class BassKaraoke:
         self.mp3_offset_sec = 0.0
 
         # ── Countdown ──────────────────────────────────────────────────
-        self.counting_down   = False
-        self.countdown_beat  = 4
-        self.countdown_timer = 0.0
+        self.counting_down     = False
+        self.countdown_beat    = 4
+        self.countdown_timer   = 0.0
+        self.countdown_enabled = True    # C para activar/desactivar
 
         # ── Pitch ──────────────────────────────────────────────────────
         self.detected_hz   = 0.0
@@ -1014,7 +1016,7 @@ class BassKaraoke:
             speed_str = f"  x{self._speed_ratio():.2f}"
         engine_str = f"  [{getattr(self, 'pitch_engine', 'aubio')}]"
         off_t = self.font_tiny.render(
-            f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}   [ ,/. fino  Shift+,/. grueso   P=pitch ]",
+            f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}   [ ,/. fino  Shift+,/. grueso   P=pitch   C=countdown({'ON' if self.countdown_enabled else 'OFF'}) ]",
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
@@ -1731,10 +1733,13 @@ class BassKaraoke:
             self.playing = False
             self._music_pause()
         else:
-            self.counting_down   = True
-            self.countdown_beat  = 4
-            self.countdown_timer = 0.0
-            self.metro_beat      = 0
+            if self.countdown_enabled:
+                self.counting_down   = True
+                self.countdown_beat  = 4
+                self.countdown_timer = 0.0
+                self.metro_beat      = 0
+            else:
+                self._begin_play()
 
     def _begin_play(self):
         self.playing = True
@@ -1918,6 +1923,8 @@ class BassKaraoke:
                     elif k == pygame.K_LEFT:   self._seek_song(-16.0 if shift else -4.0)
                     elif k == pygame.K_RIGHT:  self._seek_song(+16.0 if shift else +4.0)
                     elif k == pygame.K_m:      self.toggle_mute()
+                    elif k == pygame.K_c:
+                        self.countdown_enabled = not self.countdown_enabled
                     elif k == pygame.K_d:      self.open_device_menu()
                     elif k == pygame.K_t:      self.tuner_open = not self.tuner_open
                     elif k == pygame.K_p:
