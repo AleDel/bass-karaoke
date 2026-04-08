@@ -15,6 +15,7 @@ CONTROLES:
   , / .           → Offset MP3 ±0.05 s  (fino)
   Shift + , / .   → Offset MP3 ±0.5 s   (grueso)
   D               → Abrir/cerrar selector de dispositivo de audio
+  P               → Abrir/cerrar selector de método de pitch
   ↑ / ↓          → (dentro del menú) navegar lista
   ENTER           → (dentro del menú) confirmar dispositivo
   M               → Silenciar/activar MP3
@@ -61,12 +62,26 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 SAMPLERATE        = 44100
 CHUNK_SIZE        = 2048
-WIN_S             = 8192    # ventana grande → periodo completo en notas graves (E1≈41 Hz)
+WIN_S             = 4096    # ventana ~93 ms — buen compromiso latencia/precision en graves
 HOP_S             = CHUNK_SIZE
 CONF_THRESH       = 0.4     # más permisivo; notas graves tienen confianza baja
 PITCH_HOLD_FRAMES = 8       # frames sin señal antes de resetear (≈370 ms)
 MIN_HZ            = 28.0
 MAX_HZ            = 400.0
+
+# ── Métodos de detección de pitch disponibles ─────────────────────────────────
+# Orden = orden en el menú (tecla P)
+PITCH_METHODS = [
+    "aubio",          # aubio YINfast  — sin GPU, mínima latencia
+    "crepe-tiny",     # CREPE tiny     — rápido en GPU
+    "crepe-full",     # CREPE full     — más preciso, más lento
+    "pesto",          # PESTO streaming (PyTorch)
+    "pesto-onnx",     # PESTO ONNX     — sin PyTorch en inferencia
+]
+
+# Ruta del modelo ONNX de PESTO (exportado con SR=44100, chunk=512)
+PESTO_ONNX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "mir-1k_g7_44100_512.onnx")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CUERDAS DEL BAJO  (string 1=G, 2=D, 3=A, 4=E — convención MusicXML)
@@ -487,7 +502,12 @@ class BassKaraoke:
 
         # ── Tuner ──────────────────────────────────────────────────────
         self.tuner_open   = False
-        self.pitch_engine = "aubio"   # se sobreescribe al arrancar _audio_loop
+        self.pitch_engine = "aubio"   # etiqueta mostrada en HUD
+
+        # ── Selector de método de pitch ────────────────────────────────
+        self.pitch_method      = "crepe-tiny"   # método activo
+        self.pitch_menu_open   = False
+        self.pitch_menu_sel    = PITCH_METHODS.index("crepe-tiny")
 
         # ── Metrónomo ──────────────────────────────────────────────────
         self.metro_beat  = 0
@@ -536,6 +556,7 @@ class BassKaraoke:
             "mp3_offset_sec": self.mp3_offset_sec,
             "device_idx":     self.device_idx,
             "muted":          self.muted,
+            "pitch_method":   self.pitch_method,
         }
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -562,7 +583,11 @@ class BassKaraoke:
             saved_dev           = int(  cfg.get("device_idx",     self.device_idx))
             if 0 <= saved_dev < len(self.audio_devices):
                 self.device_idx = saved_dev
-            print(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s")
+            saved_method = cfg.get("pitch_method", self.pitch_method)
+            if saved_method in PITCH_METHODS:
+                self.pitch_method  = saved_method
+                self.pitch_menu_sel = PITCH_METHODS.index(saved_method)
+            print(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s  pitch={self.pitch_method}")
         except Exception as e:
             print(f"[Config WARN] {e}")
 
@@ -616,93 +641,180 @@ class BassKaraoke:
         self.audio_thread.start()
 
     def _audio_loop(self):
-        from collections import deque
+        from collections import deque, Counter
 
-        # ── Intentar cargar torchcrepe (IA); si falla, usar aubio ──────
-        _use_crepe = False
-        _tc        = None
-        _torch     = None
-        _device    = "cpu"
-        try:
-            import torch as _torch
-            import torchcrepe as _tc
-            _use_crepe = True
-            _device    = "cuda" if _torch.cuda.is_available() else "cpu"
-            print(f"[pitch] torchcrepe CREPE-tiny ({_device})")
-            self.pitch_engine = f"CREPE ({_device.upper()})"
-        except ImportError:
-            print("[pitch] torchcrepe no disponible → aubio yinfast")
-            self.pitch_engine = "aubio YINfast"
+        method = self.pitch_method   # "aubio" | "crepe-tiny" | "crepe-full" | "pesto" | "pesto-onnx"
 
-        dev_id  = self.audio_devices[self.device_idx][0]
-
-        # Buffer rodante de audio (WIN_S muestras = ~186 ms a 44100 Hz)
-        audio_buf = np.zeros(WIN_S, dtype=np.float32)
-
-        # Umbral de confianza adaptado a cada motor:
-        # CREPE periodicity: graves ~0.1-0.6; se sube para reducir armónicos falsos
-        _crepe_thresh = 0.18
-        _aubio_thresh = CONF_THRESH
-        # Umbral de RMS mínimo — por debajo es silencio / ruido de fondo
-        _rms_gate = 0.008
-
-        # Aubio (fallback)
+        # ── Inicializar motor según método ────────────────────────────────────
+        _torch = _tc = _pesto_model = _ort_session = _pesto_cache = None
         _pitch_o = None
-        if not _use_crepe:
-            _pitch_o = aubio.pitch("yinfast", WIN_S, HOP_S, SAMPLERATE)
-            _pitch_o.set_unit("Hz")
-            _pitch_o.set_tolerance(0.8)
+        _rms_gate    = 0.008
+        _conf_thresh = 0.20
+        _chunk_audio = CHUNK_SIZE   # muestras por iteración al modelo
+        _win         = WIN_S        # ventana para modelos que usan buffer rodante
 
-        p          = pyaudio.PyAudio()
-        pitch_buf  = deque(maxlen=9)   # mediana de más frames → más estable ante armónicos
+        if method in ("crepe-tiny", "crepe-full"):
+            try:
+                import torch as _torch
+                import torchcrepe as _tc
+                _dev = "cuda" if _torch.cuda.is_available() else "cpu"
+                _model_size = "tiny" if method == "crepe-tiny" else "full"
+                print(f"[pitch] CREPE-{_model_size} ({_dev})")
+                self.pitch_engine = f"CREPE-{_model_size} ({_dev.upper()})"
+                _conf_thresh = 0.18
+            except ImportError:
+                print("[pitch] torchcrepe no disponible → aubio")
+                method = "aubio"
+
+        if method == "pesto":
+            try:
+                import torch as _torch
+                from pesto import load_model as _pesto_load
+                _dev = "cuda" if _torch.cuda.is_available() else "cpu"
+                _step_ms = CHUNK_SIZE / SAMPLERATE * 1000
+                print(f"[pitch] PESTO streaming ({_dev})  step={_step_ms:.1f}ms")
+                self.pitch_engine = f"PESTO ({_dev.upper()})"
+                _pesto_model = _pesto_load(
+                    "mir-1k_g7",
+                    step_size=_step_ms,
+                    sampling_rate=SAMPLERATE,
+                    streaming=True,
+                    max_batch_size=1,
+                ).to(_dev)
+                _pesto_model.eval()
+                _chunk_audio = CHUNK_SIZE
+                _conf_thresh = 0.30
+            except Exception as _e:
+                print(f"[pitch] PESTO no disponible ({_e}) → aubio")
+                method = "aubio"
+
+        if method == "pesto-onnx":
+            try:
+                import onnxruntime as _ort
+                if not os.path.exists(PESTO_ONNX_PATH):
+                    raise FileNotFoundError(f"Modelo ONNX no encontrado: {PESTO_ONNX_PATH}")
+                _ort_session = _ort.InferenceSession(
+                    PESTO_ONNX_PATH, providers=["CPUExecutionProvider"])
+                _cache_size  = _ort_session.get_inputs()[1].shape[1]
+                _pesto_cache = np.zeros((1, _cache_size), dtype=np.float32)
+                _chunk_audio = 512   # modelo exportado con chunk=512
+                _conf_thresh = 0.30
+                _pesto_onnx_warmup = 8
+                _pesto_onnx_cnt    = 0
+                print(f"[pitch] PESTO-ONNX  cache={_cache_size}  chunk={_chunk_audio}")
+                self.pitch_engine = "PESTO-ONNX (CPU)"
+            except Exception as _e:
+                print(f"[pitch] PESTO-ONNX no disponible ({_e}) → aubio")
+                method = "aubio"
+
+        if method == "aubio":
+            if AUBIO_OK:
+                _pitch_o = aubio.pitch("yinfast", WIN_S, HOP_S, SAMPLERATE)
+                _pitch_o.set_unit("Hz")
+                _pitch_o.set_tolerance(0.8)
+                _conf_thresh = CONF_THRESH
+                print("[pitch] aubio YINfast")
+                self.pitch_engine = "aubio YINfast"
+            else:
+                print("[pitch] aubio no disponible — sin detección")
+                self.pitch_engine = "sin pitch"
+
+        dev_id    = self.audio_devices[self.device_idx][0]
+        audio_buf = np.zeros(_win, dtype=np.float32)   # buffer rodante para crepe/aubio
+        pitch_buf = deque(maxlen=9)
         hold_count = 0
 
+        # helper: reducción de armónicos (2do y 3er) al rango del bajo
+        def _reduce_harmonic(hz):
+            for div in (2, 3):
+                root = hz / div
+                if MIN_HZ <= root <= 110.0:
+                    return root
+            return hz
+
+        p = pyaudio.PyAudio()
         try:
             stream = p.open(format=pyaudio.paFloat32, channels=1, rate=SAMPLERATE,
                             input=True, input_device_index=dev_id,
-                            frames_per_buffer=CHUNK_SIZE)
+                            frames_per_buffer=_chunk_audio)
             while self.audio_running:
+                # Si el usuario cambió el método desde el menú, reiniciar el hilo
+                if self.pitch_method != method:
+                    break
+
                 try:
-                    data    = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                    data    = stream.read(_chunk_audio, exception_on_overflow=False)
                     samples = np.frombuffer(data, dtype=np.float32).copy()
 
-                    # Actualizar buffer rodante (shift + append)
-                    audio_buf[:-CHUNK_SIZE] = audio_buf[CHUNK_SIZE:]
-                    audio_buf[-CHUNK_SIZE:] = samples
+                    rms = float(np.sqrt(np.mean(samples ** 2)))
 
-                    if _use_crepe:
-                        # Gate de RMS: descarta silencio antes de llamar a CREPE
-                        rms = float(np.sqrt(np.mean(audio_buf ** 2)))
-                        if rms < _rms_gate:
-                            hold_count += 1
-                            with self.pitch_lock:
-                                if hold_count >= PITCH_HOLD_FRAMES:
-                                    pitch_buf.clear()
-                                    self.detected_hz   = 0.0
-                                    self.detected_note = "—"
-                            continue
+                    # ── Gate de silencio ──────────────────────────────────────
+                    if rms < _rms_gate:
+                        hold_count += 1
+                        with self.pitch_lock:
+                            if hold_count >= PITCH_HOLD_FRAMES:
+                                pitch_buf.clear()
+                                self.detected_hz = 0.0; self.detected_note = "—"
+                                self.stable_hz   = 0.0; self.stable_note   = "—"
+                        continue
 
+                    # ── Inferencia según motor ────────────────────────────────
+                    pitch = 0.0
+                    conf  = 0.0
+
+                    if method in ("crepe-tiny", "crepe-full"):
+                        audio_buf[:-_chunk_audio] = audio_buf[_chunk_audio:]
+                        audio_buf[-_chunk_audio:] = samples
                         audio_t = _torch.from_numpy(audio_buf).unsqueeze(0)
                         with _torch.no_grad():
                             freq, period = _tc.predict(
                                 audio_t, SAMPLERATE,
                                 hop_length=512,
                                 fmin=32.70, fmax=MAX_HZ,
-                                model="tiny",
+                                model=_model_size,
                                 decoder=_tc.decode.weighted_argmax,
                                 return_periodicity=True,
-                                device=_device,
+                                device=_dev,
                                 pad=True,
                             )
                         pitch = float(freq[0, -1].cpu())
                         conf  = float(period[0, -1].cpu())
-                        thresh = _crepe_thresh
-                    else:
-                        pitch  = float(_pitch_o(samples)[0])
-                        conf   = float(_pitch_o.get_confidence())
-                        thresh = _aubio_thresh
 
-                    if conf > thresh and MIN_HZ <= pitch <= MAX_HZ:
+                    elif method == "pesto":
+                        x = _torch.from_numpy(samples).unsqueeze(0).to(_dev)
+                        with _torch.no_grad():
+                            f0, conf_t, amp_t = _pesto_model(
+                                x, convert_to_freq=True, return_activations=False)
+                        pitch = float(f0.flatten()[-1].cpu())
+                        conf  = float(conf_t.flatten()[-1].cpu())
+                        amp   = float(amp_t.flatten()[-1].cpu())
+                        if amp < 1e-5:
+                            conf = 0.0   # silencio según PESTO
+                        pitch = _reduce_harmonic(pitch)
+
+                    elif method == "pesto-onnx":
+                        _pesto_onnx_cnt += 1
+                        outs = _ort_session.run(
+                            None,
+                            {"audio":  samples[np.newaxis, :],
+                             "cache":  _pesto_cache})
+                        pred_midi, conf_o, vol_o, _, cache_out = outs
+                        _pesto_cache = cache_out
+                        if _pesto_onnx_cnt <= _pesto_onnx_warmup:
+                            continue   # descartar arranque del cache CQT
+                        pitch = 440.0 * 2.0 ** ((float(pred_midi.flat[0]) - 69.0) / 12.0)
+                        conf  = float(conf_o.flat[0])
+                        amp   = float(vol_o.flat[0])
+                        if amp < 2.0:
+                            conf = 0.0
+                        pitch = _reduce_harmonic(pitch)
+
+                    elif method == "aubio":
+                        pitch = float(_pitch_o(samples)[0])
+                        conf  = float(_pitch_o.get_confidence())
+
+                    # ── Filtro y buffer de pitch ──────────────────────────────
+                    if conf > _conf_thresh and MIN_HZ <= pitch <= MAX_HZ:
                         pitch_buf.append(pitch)
                         hold_count = 0
                     else:
@@ -711,35 +823,27 @@ class BassKaraoke:
                     with self.pitch_lock:
                         if pitch_buf and hold_count < PITCH_HOLD_FRAMES:
                             smoothed = float(np.median(list(pitch_buf)))
-                            # Anti-armónico: si la mediana es ~3x o ~2x una lectura
-                            # grave reciente, preferir la grave (fundamental real del bajo)
-                            graves = [h for h in pitch_buf if h < smoothed * 0.6]
+                            graves   = [h for h in pitch_buf if h < smoothed * 0.6]
                             if len(graves) >= 2:
                                 smoothed = float(np.median(graves))
                             self.detected_hz   = smoothed
                             self.detected_note = hz_to_note_name(smoothed)
 
-                            # ── Nota estable por mayoría (para el juego) ──
-                            # Convertir buffer a MIDI redondeado y elegir el más votado
-                            from collections import Counter
                             midi_votes = [int(round(12 * math.log2(h / 440) + 69))
                                           for h in pitch_buf if h > MIN_HZ]
                             if midi_votes:
-                                counts     = Counter(midi_votes)
+                                counts = Counter(midi_votes)
                                 top_midi, top_count = counts.most_common(1)[0]
-                                # Necesita >55% del buffer para "comprometerse"
                                 if top_count >= len(pitch_buf) * 0.55:
                                     matching = [h for h in pitch_buf
                                                 if int(round(12 * math.log2(h / 440) + 69)) == top_midi]
                                     self.stable_hz   = float(np.median(matching))
                                     self.stable_note = hz_to_note_name(self.stable_hz)
-                                # Si no hay mayoría clara, la stable_hz queda como estaba
                         else:
                             pitch_buf.clear()
-                            self.detected_hz   = 0.0
-                            self.detected_note = "—"
-                            self.stable_hz     = 0.0
-                            self.stable_note   = "—"
+                            self.detected_hz = 0.0; self.detected_note = "—"
+                            self.stable_hz   = 0.0; self.stable_note   = "—"
+
                 except Exception as _e:
                     print(f"[audio loop] {_e}")
         finally:
@@ -748,6 +852,11 @@ class BassKaraoke:
             except Exception:
                 pass
             p.terminate()
+
+        # Si el método cambió (break del bucle), reiniciar con el nuevo
+        if self.audio_running and self.pitch_method != method:
+            self._start_audio()
+
 
 
     # ── Helpers ─────────────────────────────────────────────────────────
@@ -859,6 +968,8 @@ class BassKaraoke:
             self._draw_countdown()
         if self.device_menu_open:
             self._draw_device_menu()
+        if self.pitch_menu_open:
+            self._draw_pitch_menu()
         if self.tuner_open:
             self._draw_tuner()
         pygame.display.flip()
@@ -888,7 +999,7 @@ class BassKaraoke:
             speed_str = f"  x{self._speed_ratio():.2f}"
         engine_str = f"  [{getattr(self, 'pitch_engine', 'aubio')}]"
         off_t = self.font_tiny.render(
-            f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}   [ ,/. fino  Shift+,/. grueso ]",
+            f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}   [ ,/. fino  Shift+,/. grueso   P=pitch ]",
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
@@ -1513,6 +1624,48 @@ class BassKaraoke:
             True, C_GRAY)
         self.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
 
+    # ── Menú método de pitch ─────────────────────────────────────────────
+    def _draw_pitch_menu(self):
+        LABELS = {
+            "aubio":      "aubio YINfast  (CPU, sin GPU)",
+            "crepe-tiny": "CREPE tiny     (GPU recomendado)",
+            "crepe-full": "CREPE full     (GPU — más preciso)",
+            "pesto":      "PESTO streaming  (PyTorch, GPU)",
+            "pesto-onnx": "PESTO ONNX     (CPU, sin PyTorch)",
+        }
+        mw, mh = 540, 260
+        mx, my = W // 2 - mw // 2, H // 2 - mh // 2
+
+        ov = pygame.Surface((W, H), pygame.SRCALPHA)
+        ov.fill(C_OVERLAY)
+        self.screen.blit(ov, (0, 0))
+
+        pygame.draw.rect(self.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
+        pygame.draw.rect(self.screen, C_ACCENT, (mx, my, mw, mh), 2, border_radius=12)
+
+        hdr = self.font_med.render("MÉTODO DE DETECCIÓN DE PITCH", True, C_ACCENT)
+        self.screen.blit(hdr, (mx + mw // 2 - hdr.get_width() // 2, my + 14))
+        pygame.draw.line(self.screen, C_DGRAY,
+                         (mx + 10, my + 42), (mx + mw - 10, my + 42), 1)
+
+        row_h = 32
+        for i, m in enumerate(PITCH_METHODS):
+            ry     = my + 50 + i * row_h
+            is_sel = (i == self.pitch_menu_sel)
+            is_cur = (m == self.pitch_method)
+            if is_sel:
+                pygame.draw.rect(self.screen, C_DGRAY,
+                                 (mx + 6, ry - 2, mw - 12, row_h - 2), border_radius=4)
+            col = C_GREEN if is_cur else C_WHITE if is_sel else C_GRAY
+            pre = "● " if is_cur else "  "
+            lbl = self.font_small.render(f"{pre}{LABELS.get(m, m)}", True, col)
+            self.screen.blit(lbl, (mx + 12, ry + 4))
+
+        hint = self.font_tiny.render(
+            "↑↓ navegar    ENTER aplicar    ESC / P  cerrar",
+            True, C_GRAY)
+        self.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
+
     # ════════════════════════════════════════════════════════════════════
     #  CONTROLES
     # ════════════════════════════════════════════════════════════════════
@@ -1644,6 +1797,23 @@ class BassKaraoke:
                             self.confirm_device()
                         continue
 
+                    # ── Menú método de pitch ───────────────────────────
+                    if self.pitch_menu_open:
+                        if k in (pygame.K_ESCAPE, pygame.K_p):
+                            self.pitch_menu_open = False
+                        elif k == pygame.K_UP:
+                            self.pitch_menu_sel = max(0, self.pitch_menu_sel - 1)
+                        elif k == pygame.K_DOWN:
+                            self.pitch_menu_sel = min(
+                                len(PITCH_METHODS) - 1, self.pitch_menu_sel + 1)
+                        elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                            self.pitch_method   = PITCH_METHODS[self.pitch_menu_sel]
+                            self.pitch_menu_open = False
+                            # Reiniciar hilo de audio con el nuevo método
+                            if self.audio_running:
+                                self._start_audio()
+                        continue
+
                     # ── Controles principales ─────────────────────────
                     if   k == pygame.K_ESCAPE:
                         if self.tuner_open:
@@ -1657,6 +1827,9 @@ class BassKaraoke:
                     elif k == pygame.K_m:      self.toggle_mute()
                     elif k == pygame.K_d:      self.open_device_menu()
                     elif k == pygame.K_t:      self.tuner_open = not self.tuner_open
+                    elif k == pygame.K_p:
+                        self.pitch_menu_open = not self.pitch_menu_open
+                        self.pitch_menu_sel  = PITCH_METHODS.index(self.pitch_method)
                     elif k == pygame.K_F5:     self._save_config()
                     elif k == pygame.K_F6:
                         self._load_config()

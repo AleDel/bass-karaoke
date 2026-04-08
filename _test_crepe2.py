@@ -9,11 +9,11 @@ from collections import deque
 
 SR          = 44100
 CHUNK       = 2048
-WIN         = 8192
+WIN         = 4096   # reducido: 8192=186ms mezclaba ataque+decay; 4096=93ms mas limpio
 FMIN        = 32.70
 FMAX        = 400.0
 RMS_GATE    = 0.008   # por debajo → silencio
-CONF_THRESH = 0.10    # period mínimo aceptable
+CONF_THRESH = 0.20    # subido: 0.10 deja pasar demasiado ruido en frecuencias bajas
 HOLD_MAX    = 6       # frames sin señal antes de limpiar
 
 NOTE_NAMES  = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
@@ -68,7 +68,7 @@ try:
                 t, SR,
                 hop_length=512,
                 fmin=FMIN, fmax=FMAX,
-                model="tiny",
+                model="full",
                 decoder=torchcrepe.decode.weighted_argmax,
                 return_periodicity=True,
                 device=dev,
