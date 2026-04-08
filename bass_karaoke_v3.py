@@ -548,11 +548,11 @@ class BassKaraoke:
             except Exception as e:
                 print(f"[WARN] pygame.mixer: {e}")
 
+        # Cargar config antes de arrancar el hilo (así el método correcto se usa desde el inicio)
+        self._load_config()
+
         if PITCH_AVAILABLE and self.audio_devices:
             self._start_audio()
-
-        # Cargar config guardada si existe
-        self._load_config()
 
     # ── Config save / load ─────────────────────────────────────────────
     def _save_config(self):
@@ -637,7 +637,8 @@ class BassKaraoke:
 
     def _start_audio(self, list_idx=None):
         self.audio_running = False
-        if self.audio_thread and self.audio_thread.is_alive():
+        if (self.audio_thread and self.audio_thread.is_alive()
+                and self.audio_thread is not threading.current_thread()):
             self.audio_thread.join(timeout=1.5)
         if list_idx is not None:
             self.device_idx = list_idx % len(self.audio_devices)
