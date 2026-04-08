@@ -394,7 +394,7 @@ HEADER_H  = 55
 TAB_Y     = HEADER_H + 3
 TAB_H     = 252
 
-NECK_Y    = TAB_Y + TAB_H + 3
+NECK_Y    = TAB_Y + TAB_H + 16
 NECK_H    = 108
 NECK_W    = 726
 
@@ -403,7 +403,7 @@ PIANO_Y   = NECK_Y
 PIANO_H   = NECK_H
 PIANO_W   = W - PIANO_X - 2
 
-LOWER_Y   = NECK_Y + NECK_H + 4
+LOWER_Y   = NECK_Y + NECK_H + 16
 LOWER_H   = 196
 
 BOTTOM_Y  = H - 52
@@ -1003,7 +1003,7 @@ class BassKaraoke:
             True, C_WHITE)
         self.screen.blit(title, (12, 8))
 
-        bpm_t = self.font_med.render(f"♩ {self.bpm:.0f} BPM", True, C_ACCENT)
+        bpm_t = self.font_med.render(f"{self.bpm:.0f} BPM", True, C_ACCENT)
         self.screen.blit(bpm_t, (W - 155, 8))
 
         if self.score_total > 0:
@@ -1022,8 +1022,8 @@ class BassKaraoke:
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
-        state = ("▶ TOCANDO" if self.playing else
-                 "⏸ PAUSA"   if self.score_total > 0 else "⏹ STOP")
+        state = (">> TOCANDO" if self.playing else
+                 "|| PAUSA"   if self.score_total > 0 else "[] STOP")
         st = self.font_tiny.render(state, True,
                                    C_GREEN if self.playing else C_GRAY)
         self.screen.blit(st, (W - 155, 36))
@@ -1497,7 +1497,7 @@ class BassKaraoke:
         pygame.draw.line(self.screen, C_DGRAY, (0, BOTTOM_Y), (W, BOTTOM_Y), 1)
 
         hints = [
-            ("SPC", "Play"), ("R","Reinicio"), ("↑↓","Tempo"),
+            ("SPC", "Play"), ("R","Reinicio"), ("Up/Dn","Tempo"),
             (",.", "offset±0.05"), ("S+,.","offset±0.5"),
             ("D","Disp"), ("T","Tuner"), ("M","Mute"),
             ("F5","Guardar"), ("F6","Cargar"), ("ESC","Salir"),
@@ -1513,7 +1513,7 @@ class BassKaraoke:
 
         if self.mp3_path:
             engine = " [varispeed]" if (self._vsp and self._vsp.loaded) else " [fixed]"
-            sfx    = " [MUTE]" if self.muted else " ♫"
+            sfx    = " [MUTE]" if self.muted else ""
             col    = C_GREEN if not self.muted else C_GRAY
             mp3s   = os.path.basename(self.mp3_path) + sfx + engine
         else:
@@ -1678,7 +1678,7 @@ class BassKaraoke:
                 self.screen.blit(lbl, (mx + 12, ry))
 
         hint = self.font_tiny.render(
-            "↑↓ navegar    ENTER confirmar    ESC / D  cerrar",
+            "Up/Dn navegar    ENTER confirmar    ESC / D  cerrar",
             True, C_GRAY)
         self.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
 
@@ -1720,7 +1720,7 @@ class BassKaraoke:
             self.screen.blit(lbl, (mx + 12, ry + 4))
 
         hint = self.font_tiny.render(
-            "↑↓ navegar    ENTER aplicar    ESC / P  cerrar",
+            "Up/Dn navegar    ENTER aplicar    ESC / P  cerrar",
             True, C_GRAY)
         self.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
 
