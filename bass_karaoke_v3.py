@@ -468,6 +468,8 @@ class BassKaraoke:
         # ── Pitch ──────────────────────────────────────────────────────
         self.detected_hz   = 0.0
         self.detected_note = "—"
+        self.stable_hz     = 0.0
+        self.stable_note   = "—"
         self.note_match    = None
         self.pitch_lock    = threading.Lock()
         self.audio_running = False
@@ -484,7 +486,8 @@ class BassKaraoke:
         self.section_stats = {}
 
         # ── Tuner ──────────────────────────────────────────────────────
-        self.tuner_open = False
+        self.tuner_open   = False
+        self.pitch_engine = "aubio"   # se sobreescribe al arrancar _audio_loop
 
         # ── Metrónomo ──────────────────────────────────────────────────
         self.metro_beat  = 0
@@ -614,14 +617,46 @@ class BassKaraoke:
 
     def _audio_loop(self):
         from collections import deque
+
+        # ── Intentar cargar torchcrepe (IA); si falla, usar aubio ──────
+        _use_crepe = False
+        _tc        = None
+        _torch     = None
+        _device    = "cpu"
+        try:
+            import torch as _torch
+            import torchcrepe as _tc
+            _use_crepe = True
+            _device    = "cuda" if _torch.cuda.is_available() else "cpu"
+            print(f"[pitch] torchcrepe CREPE-tiny ({_device})")
+            self.pitch_engine = f"CREPE ({_device.upper()})"
+        except ImportError:
+            print("[pitch] torchcrepe no disponible → aubio yinfast")
+            self.pitch_engine = "aubio YINfast"
+
         dev_id  = self.audio_devices[self.device_idx][0]
-        # yinfast con ventana grande (WIN_S=8192) cubre el período completo de E1~41Hz
-        pitch_o = aubio.pitch("yinfast", WIN_S, HOP_S, SAMPLERATE)
-        pitch_o.set_unit("Hz")
-        pitch_o.set_tolerance(0.8)
+
+        # Buffer rodante de audio (WIN_S muestras = ~186 ms a 44100 Hz)
+        audio_buf = np.zeros(WIN_S, dtype=np.float32)
+
+        # Umbral de confianza adaptado a cada motor:
+        # CREPE periodicity: graves ~0.1-0.6; se sube para reducir armónicos falsos
+        _crepe_thresh = 0.18
+        _aubio_thresh = CONF_THRESH
+        # Umbral de RMS mínimo — por debajo es silencio / ruido de fondo
+        _rms_gate = 0.008
+
+        # Aubio (fallback)
+        _pitch_o = None
+        if not _use_crepe:
+            _pitch_o = aubio.pitch("yinfast", WIN_S, HOP_S, SAMPLERATE)
+            _pitch_o.set_unit("Hz")
+            _pitch_o.set_tolerance(0.8)
+
         p          = pyaudio.PyAudio()
-        pitch_buf  = deque(maxlen=5)   # últimas N lecturas válidas → mediana
-        hold_count = 0                 # frames consecutivos sin señal
+        pitch_buf  = deque(maxlen=9)   # mediana de más frames → más estable ante armónicos
+        hold_count = 0
+
         try:
             stream = p.open(format=pyaudio.paFloat32, channels=1, rate=SAMPLERATE,
                             input=True, input_device_index=dev_id,
@@ -629,34 +664,91 @@ class BassKaraoke:
             while self.audio_running:
                 try:
                     data    = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-                    samples = np.frombuffer(data, dtype=np.float32)
-                    pitch   = pitch_o(samples)[0]
-                    conf    = pitch_o.get_confidence()
+                    samples = np.frombuffer(data, dtype=np.float32).copy()
 
-                    if conf > CONF_THRESH and MIN_HZ <= pitch <= MAX_HZ:
-                        pitch_buf.append(float(pitch))
+                    # Actualizar buffer rodante (shift + append)
+                    audio_buf[:-CHUNK_SIZE] = audio_buf[CHUNK_SIZE:]
+                    audio_buf[-CHUNK_SIZE:] = samples
+
+                    if _use_crepe:
+                        # Gate de RMS: descarta silencio antes de llamar a CREPE
+                        rms = float(np.sqrt(np.mean(audio_buf ** 2)))
+                        if rms < _rms_gate:
+                            hold_count += 1
+                            with self.pitch_lock:
+                                if hold_count >= PITCH_HOLD_FRAMES:
+                                    pitch_buf.clear()
+                                    self.detected_hz   = 0.0
+                                    self.detected_note = "—"
+                            continue
+
+                        audio_t = _torch.from_numpy(audio_buf).unsqueeze(0)
+                        with _torch.no_grad():
+                            freq, period = _tc.predict(
+                                audio_t, SAMPLERATE,
+                                hop_length=512,
+                                fmin=32.70, fmax=MAX_HZ,
+                                model="tiny",
+                                decoder=_tc.decode.weighted_argmax,
+                                return_periodicity=True,
+                                device=_device,
+                                pad=True,
+                            )
+                        pitch = float(freq[0, -1].cpu())
+                        conf  = float(period[0, -1].cpu())
+                        thresh = _crepe_thresh
+                    else:
+                        pitch  = float(_pitch_o(samples)[0])
+                        conf   = float(_pitch_o.get_confidence())
+                        thresh = _aubio_thresh
+
+                    if conf > thresh and MIN_HZ <= pitch <= MAX_HZ:
+                        pitch_buf.append(pitch)
                         hold_count = 0
                     else:
                         hold_count += 1
 
                     with self.pitch_lock:
                         if pitch_buf and hold_count < PITCH_HOLD_FRAMES:
-                            # Mediana de las últimas lecturas → más estable
                             smoothed = float(np.median(list(pitch_buf)))
+                            # Anti-armónico: si la mediana es ~3x o ~2x una lectura
+                            # grave reciente, preferir la grave (fundamental real del bajo)
+                            graves = [h for h in pitch_buf if h < smoothed * 0.6]
+                            if len(graves) >= 2:
+                                smoothed = float(np.median(graves))
                             self.detected_hz   = smoothed
                             self.detected_note = hz_to_note_name(smoothed)
+
+                            # ── Nota estable por mayoría (para el juego) ──
+                            # Convertir buffer a MIDI redondeado y elegir el más votado
+                            from collections import Counter
+                            midi_votes = [int(round(12 * math.log2(h / 440) + 69))
+                                          for h in pitch_buf if h > MIN_HZ]
+                            if midi_votes:
+                                counts     = Counter(midi_votes)
+                                top_midi, top_count = counts.most_common(1)[0]
+                                # Necesita >55% del buffer para "comprometerse"
+                                if top_count >= len(pitch_buf) * 0.55:
+                                    matching = [h for h in pitch_buf
+                                                if int(round(12 * math.log2(h / 440) + 69)) == top_midi]
+                                    self.stable_hz   = float(np.median(matching))
+                                    self.stable_note = hz_to_note_name(self.stable_hz)
+                                # Si no hay mayoría clara, la stable_hz queda como estaba
                         else:
                             pitch_buf.clear()
                             self.detected_hz   = 0.0
                             self.detected_note = "—"
-                except Exception:
-                    pass
+                            self.stable_hz     = 0.0
+                            self.stable_note   = "—"
+                except Exception as _e:
+                    print(f"[audio loop] {_e}")
         finally:
             try:
                 stream.stop_stream(); stream.close()
             except Exception:
                 pass
             p.terminate()
+
 
     # ── Helpers ─────────────────────────────────────────────────────────
     def px_of(self, beat16):
@@ -669,19 +761,18 @@ class BassKaraoke:
         return self.bpm / BPM_ORIGINAL
 
     def _hz_to_fret_string(self, hz):
-        """Fret y cuerda más probable para una hz detectada."""
+        """Fret y cuerda más probable para una hz detectada (por frecuencia exacta)."""
         best = None
         best_diff = 999.0
+        m_det = 12 * math.log2(hz / 440) + 69
         for s in range(1, 5):
             for f in range(NECK_FRETS + 1):
                 m_note = 12 * math.log2(fret_to_hz(f, s) / 440) + 69
-                m_det  = 12 * math.log2(hz / 440) + 69
-                diff   = abs(m_det - m_note) % 12
-                diff   = min(diff, 12 - diff)
+                diff   = abs(m_det - m_note)   # distancia MIDI real, sin módulo octava
                 if diff < best_diff:
                     best_diff = diff
                     best = (f, s)
-        return best if best_diff < 1.0 else None
+        return best if best_diff < 0.75 else None
 
     # ── Update ──────────────────────────────────────────────────────────
     def update(self, dt):
@@ -724,7 +815,7 @@ class BassKaraoke:
         cur = self.current_note()
         if cur and PITCH_AVAILABLE:
             with self.pitch_lock:
-                det = self.detected_hz
+                det = self.stable_hz   # juego usa la nota estable
             if det > 0 and cur["hz"] > 0:
                 match = notes_match(det, cur["hz"])
                 sec   = cur["section"]
@@ -795,8 +886,9 @@ class BassKaraoke:
         speed_str = ""
         if self._vsp and self._vsp.loaded:
             speed_str = f"  x{self._speed_ratio():.2f}"
+        engine_str = f"  [{getattr(self, 'pitch_engine', 'aubio')}]"
         off_t = self.font_tiny.render(
-            f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}   [ ,/. fino  Shift+,/. grueso ]",
+            f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}   [ ,/. fino  Shift+,/. grueso ]",
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
@@ -1012,7 +1104,7 @@ class BassKaraoke:
 
         # ── Nota detectada (contorno azul) ─────────────────────────────
         with self.pitch_lock:
-            det_hz = self.detected_hz
+            det_hz = self.stable_hz   # mástil usa nota estable
         if det_hz > MIN_HZ:
             best = self._hz_to_fret_string(det_hz)
             if best:
@@ -1042,8 +1134,9 @@ class BassKaraoke:
         cur_pc  = int(round(12 * math.log2(cur["hz"] / 440) + 69)) % 12 if cur else -1
 
         with self.pitch_lock:
-            det_hz = self.detected_hz
-        det_pc  = int(round(12 * math.log2(det_hz / 440) + 69)) % 12 if det_hz > MIN_HZ else -2
+            det_hz = self.stable_hz   # mástil usa nota estable
+        # MIDI exacto para la nota detectada → octava correcta en el piano
+        det_midi = int(round(12 * math.log2(det_hz / 440) + 69)) if det_hz > MIN_HZ else -999
 
         col_cur = (C_OK  if self.note_match is True  else
                    C_ERR if self.note_match is False else C_WAIT)
@@ -1054,7 +1147,7 @@ class BassKaraoke:
             black = key["black"]
             pc    = midi % 12
             is_cur = (pc == cur_pc) and cur is not None
-            is_det = (pc == det_pc) and det_hz > MIN_HZ
+            is_det = (midi == det_midi) and det_hz > MIN_HZ
 
             if is_cur:
                 color = col_cur
@@ -1133,8 +1226,10 @@ class BassKaraoke:
         pygame.draw.rect(self.screen, C_PANEL, (px, py, pw, ph), border_radius=10)
 
         with self.pitch_lock:
-            det_hz   = self.detected_hz
+            det_hz   = self.detected_hz    # crudo para panel de pitch
             det_note = self.detected_note
+            stb_hz   = self.stable_hz      # estable para juego / display principal
+            stb_note = self.stable_note
         cur = self.current_note()
 
         if PITCH_AVAILABLE and self.audio_devices:
@@ -1148,11 +1243,16 @@ class BassKaraoke:
 
         col  = (C_OK  if self.note_match is True  else
                 C_ERR if self.note_match is False else C_GRAY)
-        big  = self.font_big.render(det_note, True, col)
+        # Nota estable (grande) — es la que usa el juego
+        big  = self.font_big.render(stb_note, True, col)
         self.screen.blit(big, (px + 10, py + 24))
+        # Nota cruda (pequeña, gris) — sólo informativa
+        if det_hz > 0 and det_note != stb_note:
+            raw_t = self.font_tiny.render(f"crudo: {det_note}", True, C_DGRAY)
+            self.screen.blit(raw_t, (px + 10, py + 62))
 
-        if det_hz > 0:
-            hz_t = self.font_small.render(f"{det_hz:.1f} Hz", True, C_GRAY)
+        if stb_hz > 0:
+            hz_t = self.font_small.render(f"{stb_hz:.1f} Hz", True, C_GRAY)
             self.screen.blit(hz_t, (px + 10, py + 72))
 
         if cur:
@@ -1168,8 +1268,8 @@ class BassKaraoke:
             self.screen.blit(self.font_big.render("Ajusta",True, C_ERR),
                              (px + 160, py + 28))
 
-        if PITCH_AVAILABLE and cur and det_hz > 0 and cur["hz"] > 0:
-            ratio = det_hz / cur["hz"]
+        if PITCH_AVAILABLE and cur and stb_hz > 0 and cur["hz"] > 0:
+            ratio = stb_hz / cur["hz"]
             if ratio > 0:
                 cents = 1200 * math.log2(ratio)
                 while cents >  600: cents -= 1200
