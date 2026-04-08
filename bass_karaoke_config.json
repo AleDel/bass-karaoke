@@ -1,6 +1,7 @@
 {
   "bpm": 113.0,
-  "mp3_offset_sec": 0.0,
+  "mp3_offset_sec": 0.25,
   "device_idx": 3,
-  "muted": false
+  "muted": false,
+  "pitch_method": "pesto"
 }

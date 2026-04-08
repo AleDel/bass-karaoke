@@ -490,6 +490,11 @@ class BassKaraoke:
         self.audio_running = False
         self.audio_thread  = None
 
+        # Indicador de timing (qué tan a tiempo fue el último golpe)
+        self.last_hit_delta16  = 0.0   # beat_time - note_start16 al golpear
+        self.last_hit_note_idx = -1    # nota a la que pertenece
+        self.last_hit_alpha    = 0.0   # fade-out: empieza en 2.0, baja a 0
+
         # ── Dispositivos ───────────────────────────────────────────────
         self.audio_devices    = []
         self.device_idx       = 0
@@ -932,6 +937,11 @@ class BassKaraoke:
                 self.score_total += 1
                 if match:
                     self.score_ok += 1
+                    # Registrar timing del primer golpe en esta nota
+                    if self.last_hit_note_idx != self.note_idx:
+                        self.last_hit_note_idx = self.note_idx
+                        self.last_hit_delta16  = self.beat_time - cur["start16"]
+                        self.last_hit_alpha    = 2.0
                 if sec in self.section_stats:
                     self.section_stats[sec]["total"] += 1
                     if match:
@@ -941,10 +951,14 @@ class BassKaraoke:
         else:
             self.note_match = None
 
-        CURSOR_X = W // 3
-        if cur:
-            want_x      = self.px_of(cur["start16"]) - CURSOR_X
-            self.target_x = max(0, want_x)
+        # Fade-out del indicador de timing
+        if self.last_hit_alpha > 0:
+            self.last_hit_alpha = max(0.0, self.last_hit_alpha - dt)
+
+        # Scroll: seguir beat_time de forma continua (corrige el desplazamiento)
+        # Fórmula: nx = px_of(start16) - vx + CURSOR_X → nota llega al cursor
+        # cuando beat_time == start16  ↔  vx = px_of(beat_time)
+        self.target_x = max(0, self.px_of(self.beat_time))
         self.viewport_x += (self.target_x - self.viewport_x) * min(1.0, dt * 9)
 
         if self.note_idx >= len(self.notes):
@@ -1030,13 +1044,51 @@ class BassKaraoke:
             pygame.draw.line(self.screen, STRING_COLORS[s],
                              (28, int(y)), (W, int(y)), STRING_THICK[s])
 
-        # Cursor
+        # Cursor (posición actual del playback)
         pygame.draw.line(self.screen, C_ACCENT,
                          (CURSOR_X, TAB_Y + 2), (CURSOR_X, TAB_Y + TAB_H - 2), 2)
         pygame.draw.polygon(self.screen, C_ACCENT, [
             (CURSOR_X - 6, TAB_Y + 2),
             (CURSOR_X + 6, TAB_Y + 2),
             (CURSOR_X, TAB_Y + 14)])
+
+        # Indicador de timing (flecha + texto: qué tan a tiempo fue el último golpe)
+        if self.last_hit_alpha > 0:
+            fade      = min(1.0, self.last_hit_alpha)
+            alpha_int = int(fade * 255)
+            # delta16 > 0 → tardío (nota ya pasó el cursor); < 0 → anticipado
+            # Donde estaba la nota al golpear: CURSOR_X - delta16 * px_per_16th
+            offset_px = int(-self.last_hit_delta16 * self.px_per_16th)
+            offset_px = max(-160, min(160, offset_px))  # clamp ±160 px
+            hit_x     = CURSOR_X + offset_px
+
+            delta_ms = self.last_hit_delta16 / 4.0 * (60000.0 / max(1, self.bpm))
+            if abs(delta_ms) < 80:
+                base_col = C_OK      # verde: buen tiempo
+            elif abs(delta_ms) < 200:
+                base_col = C_ACCENT  # naranja: aceptable
+            else:
+                base_col = C_ERR     # rojo: fuera de tiempo
+
+            ty = TAB_Y + TAB_H - 3
+            # Línea desde el cursor hasta la posición del golpe
+            surf_line = pygame.Surface((abs(offset_px) + 2, 3), pygame.SRCALPHA)
+            pygame.draw.line(surf_line, (*base_col, alpha_int),
+                             (0, 1), (abs(offset_px), 1), 2)
+            self.screen.blit(surf_line,
+                             (min(CURSOR_X, hit_x), ty - 10))
+            # Punto de golpe
+            dot_s = pygame.Surface((10, 10), pygame.SRCALPHA)
+            pygame.draw.circle(dot_s, (*base_col, alpha_int), (5, 5), 5)
+            self.screen.blit(dot_s, (hit_x - 5, ty - 15))
+            # Texto
+            sign  = "TARDE" if delta_ms > 20 else ("ANTES" if delta_ms < -20 else "OK")
+            t_str = f"{sign} {delta_ms:+.0f}ms"
+            txt   = self.font_tiny.render(t_str, True, base_col)
+            txt_s = pygame.Surface((txt.get_width(), txt.get_height()), pygame.SRCALPHA)
+            txt_s.blit(txt, (0, 0))
+            txt_s.set_alpha(alpha_int)
+            self.screen.blit(txt_s, (CURSOR_X - txt.get_width() // 2, ty - 28))
 
         vx       = int(self.viewport_x)
         total16  = (self.notes[-1]["start16"] + self.notes[-1]["dur"]
@@ -1242,7 +1294,8 @@ class BassKaraoke:
         pygame.draw.rect(self.screen, (12, 12, 20), (px, py, pw, ph))
 
         cur = self.current_note()
-        cur_pc  = int(round(12 * math.log2(cur["hz"] / 440) + 69)) % 12 if cur else -1
+        # MIDI exacto (con octava) para la nota esperada → solo ilumina 1 tecla
+        cur_midi = int(round(12 * math.log2(cur["hz"] / 440) + 69)) if cur else -999
 
         with self.pitch_lock:
             det_hz = self.stable_hz   # mástil usa nota estable
@@ -1257,7 +1310,7 @@ class BassKaraoke:
             rect  = key["rect"]
             black = key["black"]
             pc    = midi % 12
-            is_cur = (pc == cur_pc) and cur is not None
+            is_cur = (midi == cur_midi)
             is_det = (midi == det_midi) and det_hz > MIN_HZ
 
             if is_cur:
