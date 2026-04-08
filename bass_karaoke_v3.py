@@ -27,6 +27,7 @@ import threading
 import time
 import os
 import math
+import json
 import xml.etree.ElementTree as ET
 
 # ─── Imports core opcionales ──────────────────────────────────────────────────
@@ -427,6 +428,8 @@ C_DOT     = ( 68,  68,  55)
 
 MUSICXML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "cancion", "mitab.musicxml")
+CONFIG_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "bass_karaoke_config.json")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -479,6 +482,9 @@ class BassKaraoke:
         # ── Stats ──────────────────────────────────────────────────────
         self.section_stats = {}
 
+        # ── Tuner ──────────────────────────────────────────────────────
+        self.tuner_open = False
+
         # ── Metrónomo ──────────────────────────────────────────────────
         self.metro_beat  = 0
         self.metro_flash = 0.0
@@ -515,6 +521,46 @@ class BassKaraoke:
 
         if PITCH_AVAILABLE and self.audio_devices:
             self._start_audio()
+
+        # Cargar config guardada si existe
+        self._load_config()
+
+    # ── Config save / load ─────────────────────────────────────────────
+    def _save_config(self):
+        cfg = {
+            "bpm":            self.bpm,
+            "mp3_offset_sec": self.mp3_offset_sec,
+            "device_idx":     self.device_idx,
+            "muted":          self.muted,
+        }
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+            self._config_msg     = "Config guardada"
+            self._config_msg_col = (50, 230, 110)
+        except Exception as e:
+            self._config_msg     = f"Error al guardar: {e}"
+            self._config_msg_col = (255, 70, 70)
+        self._config_msg_timer = 2.5
+
+    def _load_config(self):
+        self._config_msg       = ""
+        self._config_msg_col   = C_GRAY
+        self._config_msg_timer = 0.0
+        if not os.path.exists(CONFIG_PATH):
+            return
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            self.bpm            = float(cfg.get("bpm",            self.bpm))
+            self.mp3_offset_sec = float(cfg.get("mp3_offset_sec", self.mp3_offset_sec))
+            self.muted          = bool( cfg.get("muted",          self.muted))
+            saved_dev           = int(  cfg.get("device_idx",     self.device_idx))
+            if 0 <= saved_dev < len(self.audio_devices):
+                self.device_idx = saved_dev
+            print(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s")
+        except Exception as e:
+            print(f"[Config WARN] {e}")
 
     # ── Notas ──────────────────────────────────────────────────────────
     def _load_notes(self):
@@ -707,6 +753,8 @@ class BassKaraoke:
             self._draw_countdown()
         if self.device_menu_open:
             self._draw_device_menu()
+        if self.tuner_open:
+            self._draw_tuner()
         pygame.display.flip()
 
     # ── Header ──────────────────────────────────────────────────────────
@@ -1167,7 +1215,8 @@ class BassKaraoke:
         hints = [
             ("SPC", "Play"), ("R","Reinicio"), ("↑↓","Tempo"),
             (",.", "offset±0.05"), ("S+,.","offset±0.5"),
-            ("D","Disp"), ("M","Mute"), ("ESC","Salir"),
+            ("D","Disp"), ("T","Tuner"), ("M","Mute"),
+            ("F5","Guardar"), ("F6","Cargar"), ("ESC","Salir"),
         ]
         x = 8
         for key, desc in hints:
@@ -1192,6 +1241,105 @@ class BassKaraoke:
             f"MusicXML: {len(self.notes)} notas",
             True, C_GRAY if self.notes else C_RED)
         self.screen.blit(src, (W - src.get_width() - 8, BOTTOM_Y + 34))
+
+        # Mensaje temporal de config guardada/cargada
+        if getattr(self, '_config_msg_timer', 0) > 0:
+            msg = self.font_med.render(self._config_msg, True, self._config_msg_col)
+            self.screen.blit(msg,
+                             (W // 2 - msg.get_width() // 2, BOTTOM_Y + 14))
+
+    # ── Tuner ────────────────────────────────────────────────────────────
+    def _draw_tuner(self):
+        """
+        Afinador cromático a pantalla completa (overlay):
+        - Nota detectada grande en el centro
+        - Barra de cents con zona verde ±15 cents
+        - Las 4 notas al aire del bajo como referencia rápida
+        """
+        ov = pygame.Surface((W, H), pygame.SRCALPHA)
+        ov.fill((5, 5, 18, 235))
+        self.screen.blit(ov, (0, 0))
+
+        # Título
+        t = self.font_med.render("AFINADOR  —  T para cerrar", True, C_GRAY)
+        self.screen.blit(t, (W // 2 - t.get_width() // 2, 30))
+
+        with self.pitch_lock:
+            det_hz   = self.detected_hz
+            det_note = self.detected_note
+
+        # ── Calcular cents respecto a la nota temperada más cercana ──
+        cents    = 0.0
+        ref_note = "—"
+        ref_hz   = 0.0
+        in_tune  = False
+        if det_hz > MIN_HZ:
+            midi_f   = 12 * math.log2(det_hz / 440.0) + 69
+            midi_r   = round(midi_f)
+            cents    = (midi_f - midi_r) * 100
+            ref_hz   = 440.0 * (2 ** ((midi_r - 69) / 12))
+            names    = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+            ref_note = f"{names[midi_r % 12]}{midi_r // 12 - 1}"
+            in_tune  = abs(cents) < 15
+
+        # ── Nota grande ──────────────────────────────────────────────
+        col_note = C_GREEN if in_tune else C_ACCENT if det_hz > MIN_HZ else C_DGRAY
+        big = pygame.font.SysFont("consolas", 130, bold=True).render(
+            ref_note if det_hz > MIN_HZ else "—", True, col_note)
+        self.screen.blit(big, (W // 2 - big.get_width() // 2, H // 2 - 130))
+
+        if det_hz > MIN_HZ:
+            hz_s = self.font_small.render(f"{det_hz:.2f} Hz", True, C_GRAY)
+            self.screen.blit(hz_s, (W // 2 - hz_s.get_width() // 2, H // 2 + 20))
+
+        # ── Barra de cents ────────────────────────────────────────────
+        bw, bh  = 600, 22
+        bx      = W // 2 - bw // 2
+        by      = H // 2 + 60
+        pygame.draw.rect(self.screen, C_DGRAY, (bx, by, bw, bh), border_radius=5)
+
+        # Zona verde central (±15 cents → ±15/100*bw/2 px)
+        green_half = int(bw / 2 * 15 / 100)
+        pygame.draw.rect(self.screen, (20, 80, 30),
+                         (bx + bw // 2 - green_half, by, green_half * 2, bh),
+                         border_radius=3)
+
+        # Línea central
+        pygame.draw.line(self.screen, C_WHITE,
+                         (bx + bw // 2, by), (bx + bw // 2, by + bh), 2)
+
+        if det_hz > MIN_HZ:
+            # Aguja (cents va de -50 a +50)
+            c_clip   = max(-50, min(50, cents))
+            needle_x = bx + bw // 2 + int(c_clip / 50 * (bw // 2))
+            n_col    = C_GREEN if in_tune else C_ERR
+            pygame.draw.rect(self.screen, n_col,
+                             (needle_x - 4, by - 4, 8, bh + 8), border_radius=3)
+            cents_s = self.font_med.render(f"{cents:+.1f} cents", True, n_col)
+            self.screen.blit(cents_s, (W // 2 - cents_s.get_width() // 2, by + bh + 8))
+
+        # Etiquetas -50 / 0 / +50
+        for label, rx in [("-50", bx + 4), ("0", bx + bw // 2 - 8), ("+50", bx + bw - 26)]:
+            self.screen.blit(self.font_tiny.render(label, True, C_GRAY), (rx, by + bh + 2))
+
+        # ── Cuerdas al aire del bajo como referencia ──────────────────
+        ref_y = by + bh + 40
+        self.screen.blit(
+            self.font_small.render("Referencia cuerdas al aire:", True, C_GRAY),
+            (W // 2 - 140, ref_y))
+        open_notes = [(4, "E1", 41.20), (3, "A1", 55.00), (2, "D2", 73.42), (1, "G2", 98.00)]
+        spacing    = 130
+        start_x    = W // 2 - spacing * 3 // 2 - 30
+        for i, (s, name, hz) in enumerate(open_notes):
+            sx  = start_x + i * spacing
+            sy  = ref_y + 22
+            col = STRING_COLORS[s]
+            pygame.draw.rect(self.screen, C_PANEL, (sx - 2, sy - 2, 100, 46), border_radius=6)
+            pygame.draw.rect(self.screen, col,     (sx - 2, sy - 2, 100, 46), 2, border_radius=6)
+            n_lbl = self.font_big.render(name, True, col)
+            self.screen.blit(n_lbl, (sx + 50 - n_lbl.get_width() // 2, sy + 2))
+            h_lbl = self.font_tiny.render(f"{hz:.2f} Hz", True, C_GRAY)
+            self.screen.blit(h_lbl, (sx + 50 - h_lbl.get_width() // 2, sy + 32))
 
     # ── Countdown ────────────────────────────────────────────────────────
     def _draw_countdown(self):
@@ -1382,19 +1530,34 @@ class BassKaraoke:
                         continue
 
                     # ── Controles principales ─────────────────────────
-                    if   k == pygame.K_ESCAPE: running = False
+                    if   k == pygame.K_ESCAPE:
+                        if self.tuner_open:
+                            self.tuner_open = False
+                        else:
+                            running = False
                     elif k == pygame.K_SPACE:  self.toggle_play()
                     elif k == pygame.K_r:      self.restart()
                     elif k == pygame.K_UP:     self.change_bpm(+5)
                     elif k == pygame.K_DOWN:   self.change_bpm(-5)
                     elif k == pygame.K_m:      self.toggle_mute()
                     elif k == pygame.K_d:      self.open_device_menu()
+                    elif k == pygame.K_t:      self.tuner_open = not self.tuner_open
+                    elif k == pygame.K_F5:     self._save_config()
+                    elif k == pygame.K_F6:
+                        self._load_config()
+                        self._config_msg       = "Config cargada"
+                        self._config_msg_col   = C_BLUE
+                        self._config_msg_timer = 2.5
 
                     # ── Offset fino / grueso ──────────────────────────
                     elif k in (pygame.K_COMMA, pygame.K_LESS):
                         self.change_offset(-0.5 if shift else -0.05)
                     elif k in (pygame.K_PERIOD, pygame.K_GREATER):
                         self.change_offset(+0.5 if shift else +0.05)
+
+            # Tick del mensaje de config
+            if getattr(self, '_config_msg_timer', 0) > 0:
+                self._config_msg_timer = max(0.0, self._config_msg_timer - dt)
 
             self.update(dt)
             self.draw()

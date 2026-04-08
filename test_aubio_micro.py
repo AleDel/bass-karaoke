@@ -3,7 +3,7 @@ import numpy as np
 import pyaudio
 
 # --- CONFIGURACIÓN ---
-ID_DISPOSITIVO = 1  # Voicemeeter Out B1
+ID_DISPOSITIVO = 3  # usar el script pyaudio_lista_micros.py para ver id de dispositivos
 CHANNELS = 1
 SAMPLERATE = 44100
 CHUNK_SIZE = 2048   
