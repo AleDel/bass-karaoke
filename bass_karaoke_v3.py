@@ -1771,6 +1771,40 @@ class BassKaraoke:
         elif self._pgm_loaded:
             pygame.mixer.music.stop()
 
+    def _seek_song(self, delta_sec):
+        """Salta la posición de la canción ±delta_sec segundos."""
+        bps16    = self.bpm / 60.0 * 4.0          # 16vos por segundo
+        delta_16 = delta_sec * bps16
+
+        min_bt = -(self.mp3_offset_sec * bps16)
+        max_bt = (self.notes[-1]["start16"] + self.notes[-1]["dur"]) if self.notes else 0.0
+        self.beat_time = max(min_bt, min(max_bt, self.beat_time + delta_16))
+
+        # Actualizar note_idx: primera nota no completamente pasada
+        new_idx = 0
+        for i, n in enumerate(self.notes):
+            if n["start16"] + n["dur"] <= self.beat_time:
+                new_idx = i + 1
+            else:
+                break
+        self.note_idx = min(new_idx, len(self.notes) - 1)
+
+        # Cancelar countdown si estaba activo
+        if self.counting_down:
+            self.counting_down = False
+
+        # Saltar el audio
+        audio_sec = self.beat_time / bps16 + self.mp3_offset_sec
+        if self._vsp and self._vsp.loaded and audio_sec >= 0:
+            was_playing = self.playing
+            self._vsp.play(offset_sec=audio_sec)
+            if not was_playing:
+                self._vsp.pause()   # reposicionado pero sigue pausado
+
+        # Snap inmediato del viewport (sin lerp)
+        self.viewport_x = max(0.0, self.px_of(self.beat_time))
+        self.target_x   = self.viewport_x
+
     def restart(self):
         self.playing        = False
         self.counting_down  = False
@@ -1880,6 +1914,8 @@ class BassKaraoke:
                     elif k == pygame.K_r:      self.restart()
                     elif k == pygame.K_UP:     self.change_bpm(+5)
                     elif k == pygame.K_DOWN:   self.change_bpm(-5)
+                    elif k == pygame.K_LEFT:   self._seek_song(-16.0 if shift else -4.0)
+                    elif k == pygame.K_RIGHT:  self._seek_song(+16.0 if shift else +4.0)
                     elif k == pygame.K_m:      self.toggle_mute()
                     elif k == pygame.K_d:      self.open_device_menu()
                     elif k == pygame.K_t:      self.tuner_open = not self.tuner_open
