@@ -559,11 +559,12 @@ class BassKaraoke:
     # ── Config save / load ─────────────────────────────────────────────
     def _save_config(self):
         cfg = {
-            "bpm":            self.bpm,
-            "mp3_offset_sec": self.mp3_offset_sec,
-            "device_idx":     self.device_idx,
-            "muted":          self.muted,
-            "pitch_method":   self.pitch_method,
+            "bpm":              self.bpm,
+            "mp3_offset_sec":   self.mp3_offset_sec,
+            "device_idx":       self.device_idx,
+            "muted":            self.muted,
+            "pitch_method":     self.pitch_method,
+            "countdown_enabled": self.countdown_enabled,
         }
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -594,6 +595,7 @@ class BassKaraoke:
             if saved_method in PITCH_METHODS:
                 self.pitch_method  = saved_method
                 self.pitch_menu_sel = PITCH_METHODS.index(saved_method)
+            self.countdown_enabled = bool(cfg.get("countdown_enabled", self.countdown_enabled))
             print(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s  pitch={self.pitch_method}")
         except Exception as e:
             print(f"[Config WARN] {e}")
