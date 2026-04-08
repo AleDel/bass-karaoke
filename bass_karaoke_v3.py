@@ -1736,10 +1736,13 @@ class BassKaraoke:
             self.metro_beat      = 0
 
     def _begin_play(self):
-        self.playing   = True
-        offset_sec     = self.mp3_offset_sec
-        self.beat_time = -(offset_sec * (self.bpm / 60.0) * 4.0)
-        is_fresh       = (self.note_idx == 0 and self.score_total == 0)
+        self.playing = True
+        offset_sec   = self.mp3_offset_sec
+        is_fresh     = (self.note_idx == 0 and self.score_total == 0)
+
+        # Solo reiniciar beat_time en arranque fresco; en resume mantener la posición actual
+        if is_fresh:
+            self.beat_time = -(offset_sec * (self.bpm / 60.0) * 4.0)
 
         if self._vsp and self._vsp.loaded:
             self._vsp.set_speed(self._speed_ratio())
