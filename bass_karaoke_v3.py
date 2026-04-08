@@ -78,6 +78,7 @@ PITCH_METHODS = [
     "crepe-full",     # CREPE full     — más preciso, más lento
     "pesto",          # PESTO streaming (PyTorch)
     "pesto-onnx",     # PESTO ONNX     — sin PyTorch en inferencia
+    "basic-pitch",    # Spotify Basic Pitch — buffer deslizante 1.5s
 ]
 
 # Ruta del modelo ONNX de PESTO (exportado con SR=44100, chunk=512)
@@ -662,6 +663,7 @@ class BassKaraoke:
         _conf_thresh = 0.20
         _chunk_audio = CHUNK_SIZE   # muestras por iteración al modelo
         _win         = WIN_S        # ventana para modelos que usan buffer rodante
+        _bp_tmppath  = None         # ruta del fichero WAV temporal (basic-pitch)
 
         if method in ("crepe-tiny", "crepe-full"):
             try:
@@ -728,6 +730,49 @@ class BassKaraoke:
             else:
                 print("[pitch] aubio no disponible — sin detección")
                 self.pitch_engine = "sin pitch"
+
+        if method == "basic-pitch":
+            try:
+                import soundfile as _sf
+                import tempfile as _tmpmod
+                # Forzar protobuf puro antes de importar basic_pitch
+                # (evita crash si TF está instalado con versión de protobuf incompatible)
+                os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+                from basic_pitch.inference import predict as _bp_predict, Model as _BP_Model
+                # Apuntar directamente al modelo ONNX (no depende de TF)
+                import pathlib as _pl
+                _bp_site = _pl.Path(_BP_Model.__module__.split('.')[0])
+                _bp_onnx = None
+                try:
+                    import basic_pitch as _bp_pkg
+                    _pkg_dir = _pl.Path(_bp_pkg.__file__).parent
+                    _onnx_candidate = _pkg_dir / "saved_models" / "icassp_2022" / "nmp.onnx"
+                    if _onnx_candidate.exists():
+                        _bp_onnx = str(_onnx_candidate)
+                except Exception:
+                    pass
+
+                if _bp_onnx:
+                    _bp_model = _BP_Model(_bp_onnx)
+                    print(f"[pitch] Basic Pitch ONNX  {_bp_onnx}")
+                else:
+                    from basic_pitch import ICASSP_2022_MODEL_PATH as _BP_MODEL_PATH
+                    _bp_model = _BP_Model(_BP_MODEL_PATH)
+                    print("[pitch] Basic Pitch (runtime por defecto)")
+
+                _bp_buf_sec    = 1.5
+                _bp_buf_n      = int(_bp_buf_sec * SAMPLERATE)
+                _bp_buf        = np.zeros(_bp_buf_n, dtype=np.float32)
+                _bp_hop_chunks = max(1, int(0.5 * SAMPLERATE / CHUNK_SIZE))  # inferencia cada ~0.5s
+                _bp_chunk_cnt  = 0
+                _bp_latest_hz  = 0.0
+                _bp_tmp        = _tmpmod.NamedTemporaryFile(suffix='.wav', delete=False)
+                _bp_tmppath    = _bp_tmp.name
+                _bp_tmp.close()
+                self.pitch_engine = "Basic Pitch (ONNX)"
+            except Exception as _e:
+                print(f"[pitch] basic-pitch no disponible ({_e}) → aubio")
+                method = "aubio"
 
         dev_id    = self.audio_devices[self.device_idx][0]
         audio_buf = np.zeros(_win, dtype=np.float32)   # buffer rodante para crepe/aubio
@@ -823,6 +868,35 @@ class BassKaraoke:
                         pitch = float(_pitch_o(samples)[0])
                         conf  = float(_pitch_o.get_confidence())
 
+                    elif method == "basic-pitch":
+                        # Añadir samples al buffer deslizante
+                        _bp_buf[:-_chunk_audio] = _bp_buf[_chunk_audio:]
+                        _bp_buf[-_chunk_audio:] = samples
+                        _bp_chunk_cnt += 1
+
+                        # Correr inferencia cada _bp_hop_chunks iteraciones
+                        if _bp_chunk_cnt >= _bp_hop_chunks:
+                            _bp_chunk_cnt = 0
+                            try:
+                                _sf.write(_bp_tmppath, _bp_buf, SAMPLERATE)
+                                _, _, note_events = _bp_predict(_bp_tmppath, _bp_model)
+                                # note_events: [(start_s, end_s, pitch_midi, amp, [bends]), ...]
+                                # Buscar la nota más reciente en la última ventana de 0.5s
+                                win_start = _bp_buf_sec - 0.5
+                                recent = [n for n in note_events
+                                          if n[0] >= win_start]
+                                if recent:
+                                    best = max(recent, key=lambda n: n[3])  # mayor amplitud
+                                    midi_n = float(best[2])
+                                    _bp_latest_hz = 440.0 * 2.0 ** ((midi_n - 69.0) / 12.0)
+                                else:
+                                    _bp_latest_hz = 0.0
+                            except Exception as _bp_e:
+                                print(f"[basic-pitch] {_bp_e}")
+
+                        pitch = _bp_latest_hz
+                        conf  = 1.0 if (MIN_HZ <= pitch <= MAX_HZ) else 0.0
+
                     # ── Filtro y buffer de pitch ──────────────────────────────
                     if conf > _conf_thresh and MIN_HZ <= pitch <= MAX_HZ:
                         pitch_buf.append(pitch)
@@ -862,6 +936,11 @@ class BassKaraoke:
             except Exception:
                 pass
             p.terminate()
+            if _bp_tmppath:
+                try:
+                    os.unlink(_bp_tmppath)
+                except Exception:
+                    pass
 
         # Si el método cambió (break del bucle), reiniciar con el nuevo
         if self.audio_running and self.pitch_method != method:
@@ -1689,7 +1768,8 @@ class BassKaraoke:
             "crepe-tiny": "CREPE tiny     (GPU recomendado)",
             "crepe-full": "CREPE full     (GPU — más preciso)",
             "pesto":      "PESTO streaming  (PyTorch, GPU)",
-            "pesto-onnx": "PESTO ONNX     (CPU, sin PyTorch)",
+            "pesto-onnx":   "PESTO ONNX     (CPU, sin PyTorch)",
+            "basic-pitch":  "Basic Pitch    (Spotify, ONNX en Windows)",
         }
         mw, mh = 540, 260
         mx, my = W // 2 - mw // 2, H // 2 - mh // 2
