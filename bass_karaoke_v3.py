@@ -59,13 +59,14 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PARÁMETROS DE AUDIO (bajo eléctrico)
 # ═══════════════════════════════════════════════════════════════════════════════
-SAMPLERATE  = 44100
-CHUNK_SIZE  = 2048
-WIN_S       = 4096
-HOP_S       = CHUNK_SIZE
-CONF_THRESH = 0.6
-MIN_HZ      = 28.0
-MAX_HZ      = 400.0
+SAMPLERATE        = 44100
+CHUNK_SIZE        = 2048
+WIN_S             = 8192    # ventana grande → periodo completo en notas graves (E1≈41 Hz)
+HOP_S             = CHUNK_SIZE
+CONF_THRESH       = 0.4     # más permisivo; notas graves tienen confianza baja
+PITCH_HOLD_FRAMES = 8       # frames sin señal antes de resetear (≈370 ms)
+MIN_HZ            = 28.0
+MAX_HZ            = 400.0
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CUERDAS DEL BAJO  (string 1=G, 2=D, 3=A, 4=E — convención MusicXML)
@@ -612,11 +613,15 @@ class BassKaraoke:
         self.audio_thread.start()
 
     def _audio_loop(self):
+        from collections import deque
         dev_id  = self.audio_devices[self.device_idx][0]
+        # yinfast con ventana grande (WIN_S=8192) cubre el período completo de E1~41Hz
         pitch_o = aubio.pitch("yinfast", WIN_S, HOP_S, SAMPLERATE)
         pitch_o.set_unit("Hz")
         pitch_o.set_tolerance(0.8)
-        p = pyaudio.PyAudio()
+        p          = pyaudio.PyAudio()
+        pitch_buf  = deque(maxlen=5)   # últimas N lecturas válidas → mediana
+        hold_count = 0                 # frames consecutivos sin señal
         try:
             stream = p.open(format=pyaudio.paFloat32, channels=1, rate=SAMPLERATE,
                             input=True, input_device_index=dev_id,
@@ -627,11 +632,21 @@ class BassKaraoke:
                     samples = np.frombuffer(data, dtype=np.float32)
                     pitch   = pitch_o(samples)[0]
                     conf    = pitch_o.get_confidence()
+
+                    if conf > CONF_THRESH and MIN_HZ <= pitch <= MAX_HZ:
+                        pitch_buf.append(float(pitch))
+                        hold_count = 0
+                    else:
+                        hold_count += 1
+
                     with self.pitch_lock:
-                        if conf > CONF_THRESH and MIN_HZ <= pitch <= MAX_HZ:
-                            self.detected_hz   = float(pitch)
-                            self.detected_note = hz_to_note_name(float(pitch))
+                        if pitch_buf and hold_count < PITCH_HOLD_FRAMES:
+                            # Mediana de las últimas lecturas → más estable
+                            smoothed = float(np.median(list(pitch_buf)))
+                            self.detected_hz   = smoothed
+                            self.detected_note = hz_to_note_name(smoothed)
                         else:
+                            pitch_buf.clear()
                             self.detected_hz   = 0.0
                             self.detected_note = "—"
                 except Exception:
