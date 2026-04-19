@@ -1,4 +1,7 @@
 """
+[DEPRECATED] Este archivo es un wrapper de compatibilidad.
+El código está en el paquete bass_karaoke/.
+
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BASS KARAOKE v3 — Feet Don't Fail Me Now               ║
 ║         Joy Crookes | Bass: Dayna Fisher                        ║
