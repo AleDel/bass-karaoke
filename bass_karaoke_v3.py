@@ -17,6 +17,7 @@ CONTROLES:
   Shift + , / .   → Offset MP3 ±0.5 s   (grueso)
   D               → Abrir/cerrar selector de dispositivo de audio
   P               → Abrir/cerrar selector de método de pitch
+  S               → Cambiar renderer de partitura  (Verovio ↔ Music21)
   ↑ / ↓          → (dentro del menú) navegar lista
   ENTER           → (dentro del menú) confirmar dispositivo
   M               → Silenciar/activar MP3
@@ -83,6 +84,14 @@ try:
     CAIROSVG_OK = True
 except ImportError:
     print("[WARN] cairosvg no encontrado — pip install cairosvg")
+
+# ─── music21 (partitura alternativa sin Cairo/CairoSVG) ───────────────────────
+MUSIC21_OK = False
+try:
+    import music21 as _music21_mod
+    MUSIC21_OK = True
+except ImportError:
+    print("[WARN] music21 no encontrado — pip install music21")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PARÁMETROS DE AUDIO (bajo eléctrico)
@@ -614,15 +623,17 @@ class BassKaraoke:
         self.sections = []
         self._load_notes()
 
-        # ── Score pre-render (Verovio) ──────────────────────────────────
-        self._score_surf     = None   # pygame Surface con partitura renderizada
-        self._score_note_xs  = []     # [(start16, pixel_x), …] para scroll exacto
-        self._score_scroll_x = 0.0   # posición de scroll actual (suavizada)
+        # ── Score pre-render (Verovio / Music21) ───────────────────────
+        self.score_renderer  = "verovio"   # "verovio" | "music21"  (override en _load_config)
+        self._score_loading  = False
+        self._score_surf     = None        # pygame Surface con partitura renderizada
+        self._score_note_xs  = []          # [(start16, pixel_x), …] para scroll exacto
+        self._score_scroll_x = 0.0         # posición de scroll actual (suavizada)
         self._score_total16  = (
             (self.notes[-1]["start16"] + self.notes[-1]["dur"]) if self.notes else 1
         )
-        if VEROVIO_OK and CAIROSVG_OK:
-            self._init_score_surface()
+        # La init del score se llama después de _load_config (más abajo),
+        # para respetar el renderer guardado en la config.
 
         # ── Piano (precalcular) ─────────────────────────────────────────
         self._piano_keys_list = []   # se rellena en draw (necesita pygame.Rect)
@@ -647,6 +658,15 @@ class BassKaraoke:
         # Cargar config antes de arrancar el hilo (así el método correcto se usa desde el inicio)
         self._load_config()
 
+        # ── Init score según renderer configurado ──────────────────────────
+        if self.score_renderer == "music21" and MUSIC21_OK:
+            self._init_score_surface_music21()
+        elif VEROVIO_OK and CAIROSVG_OK:
+            self._init_score_surface()
+        elif MUSIC21_OK:
+            self.score_renderer = "music21"
+            self._init_score_surface_music21()
+
         if PITCH_AVAILABLE and self.audio_devices:
             self._start_audio()
 
@@ -659,6 +679,7 @@ class BassKaraoke:
             "muted":            self.muted,
             "pitch_method":     self.pitch_method,
             "countdown_enabled": self.countdown_enabled,
+            "score_renderer":   self.score_renderer,
         }
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -690,7 +711,10 @@ class BassKaraoke:
                 self.pitch_method  = saved_method
                 self.pitch_menu_sel = PITCH_METHODS.index(saved_method)
             self.countdown_enabled = bool(cfg.get("countdown_enabled", self.countdown_enabled))
-            print(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s  pitch={self.pitch_method}")
+            saved_renderer = cfg.get("score_renderer", self.score_renderer)
+            if saved_renderer in ("verovio", "music21"):
+                self.score_renderer = saved_renderer
+            print(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s  pitch={self.pitch_method}  renderer={self.score_renderer}")
         except Exception as e:
             print(f"[Config WARN] {e}")
 
@@ -1537,6 +1561,222 @@ class BassKaraoke:
             self._score_surf    = None
             self._score_note_xs = []
 
+    # ── Partitura: renderer Music21 ─────────────────────────────────────
+    def _init_score_surface_music21(self):
+        """
+        Renderiza el MusicXML con music21.
+        Intenta MuseScore si está instalado (vía music21.write); si no, dibuja
+        una tira de pentagrama con pygame directamente (sin dependencias externas).
+        """
+        try:
+            import music21 as m21
+
+            # ── Parsear MusicXML ────────────────────────────────────────
+            score = m21.converter.parse(MUSICXML_PATH)
+
+            # Localizar la parte de notación (no-tab)
+            target_part = None
+            for part in score.parts:
+                clefs_in = list(part.flatten().getElementsByClass('Clef'))
+                if not any(isinstance(c, m21.clef.TabClef) for c in clefs_in):
+                    target_part = part
+                    break
+            if target_part is None:
+                target_part = score.parts[0] if score.parts else score
+
+            # ── Detectar clave para posicionamiento vertical ───────────
+            first_clef = None
+            for c in target_part.flatten().getElementsByClass('Clef'):
+                first_clef = c
+                break
+            if first_clef is not None:
+                sign = getattr(first_clef, 'sign', 'F') or 'F'
+                octave_change = int(getattr(first_clef, 'octaveChange', 0) or 0)
+            else:
+                sign          = 'F'   # bajo por defecto
+                octave_change = -1    # Bass8vbClef (habitual en bajo eléctrico)
+
+            # Línea inferior del pentagrama en numeración diatónica de music21:
+            #   Clave de Fa  (bass):   G2 = 19
+            #   Clave de Sol (treble): E4 = 31
+            bottom_diatonic = 19 if sign == 'F' else 31
+            # 8vb: la nota SUENA una 8ª por debajo de lo ESCRITO
+            # music21 almacena el tono SONANTE → para posición visual sumamos 7 pasos
+            diatonic_offset = int(-octave_change * 7)
+
+            # ── Extraer notas con offsets ───────────────────────────────
+            total_ql = float(target_part.duration.quarterLength)
+            time_sigs = list(target_part.flatten().getElementsByClass('TimeSignature'))
+            bar_ql = float(time_sigs[0].barDuration.quarterLength) if time_sigs else 4.0
+
+            m21_notes = []
+            for elem in target_part.flatten().notesAndRests:
+                if isinstance(elem, m21.note.Rest):
+                    continue
+                pitches = (elem.pitches
+                           if isinstance(elem, m21.chord.Chord)
+                           else [elem.pitch])
+                offset_ql = float(elem.offset)
+                dur_ql    = float(elem.duration.quarterLength)
+                for p in pitches:
+                    m21_notes.append({
+                        'offset_ql':   offset_ql,
+                        'duration_ql': dur_ql,
+                        'diatonic':    p.diatonicNoteNum,
+                    })
+            m21_notes.sort(key=lambda x: (x['offset_ql'], x['diatonic']))
+
+            # ── Intentar renderizado con MuseScore ──────────────────────
+            rendered_ok = False
+            try:
+                import tempfile, shutil as _sh, glob as _glob
+                tmp_dir  = tempfile.mkdtemp()
+                tmp_base = os.path.join(tmp_dir, 'score.png')
+                target_part.write('musicxml.png', fp=tmp_base)
+                pngs = sorted(_glob.glob(os.path.join(tmp_dir, '*.png')))
+                if pngs:
+                    raw = pygame.image.load(pngs[0]).convert()
+                    # MuseScore genera fondo blanco; invertir para tema oscuro
+                    arr = pygame.surfarray.pixels3d(raw)
+                    ink = (arr[:, :, 0].astype('int32')
+                           + arr[:, :, 1] + arr[:, :, 2]) < 400
+                    arr[ink]  = [188, 188, 210]
+                    arr[~ink] = [0, 0, 0]
+                    del arr
+                    target_h = SCORE_H - 4
+                    w_new = int(raw.get_width() * target_h
+                                / max(raw.get_height(), 1))
+                    self._score_surf = pygame.transform.smoothscale(
+                        raw, (max(w_new, 1), target_h))
+                    rendered_ok = True
+                _sh.rmtree(tmp_dir, ignore_errors=True)
+            except Exception as ex_ms:
+                print(f"[Music21] MuseScore no disponible "
+                      f"({type(ex_ms).__name__}: {ex_ms})  →  dibujo manual")
+
+            if not rendered_ok:
+                # ── Tira dibujada con pygame (sin dependencias externas) ─
+                self._score_surf = self._draw_score_m21_strip(
+                    m21_notes, total_ql, bar_ql,
+                    bottom_diatonic, diatonic_offset)
+
+            # ── Mapeo self.notes → pixel X (offset lineal) ─────────────
+            img_w = self._score_surf.get_width()
+            if total_ql > 0 and self.notes:
+                self._score_note_xs = [
+                    (n['start16'], n['start16'] / (total_ql * 4.0) * img_w)
+                    for n in self.notes
+                ]
+            else:
+                self._score_note_xs = []
+
+            rname = 'MuseScore' if rendered_ok else 'manual'
+            print(f"[Music21] {self._score_surf.get_width()}×"
+                  f"{self._score_surf.get_height()}px  "
+                  f"notas={len(m21_notes)}  render={rname}")
+
+        except Exception as _e:
+            print(f"[Music21 ERROR] {_e}")
+            import traceback; traceback.print_exc()
+            self._score_surf    = None
+            self._score_note_xs = []
+        finally:
+            self._score_loading = False
+
+    # ── Partitura: tira pygame sin dependencias externas ───────────────
+    def _draw_score_m21_strip(self, m21_notes, total_ql, bar_ql,
+                               bottom_diatonic, diatonic_offset):
+        """
+        Dibuja una tira de pentagrama con pygame puro.
+        Usa el esquema diatónico de music21 para colocar las notas
+        en la posición correcta del pentagrama.
+        """
+        # Ancho: ~120 px por quarter note, mínimo 6000 px
+        PPQ   = 120
+        img_w = max(W * 6, int(total_ql * PPQ), 6000)
+        img_h = SCORE_H - 4
+        surf  = pygame.Surface((img_w, img_h))
+        surf.fill((0, 0, 0))
+
+        if not m21_notes or total_ql <= 0:
+            return surf
+
+        # ── Geometría del pentagrama ────────────────────────────────────
+        MARGIN_Y = img_h * 0.16
+        staff_h  = img_h - 2 * MARGIN_Y
+        line_sp  = staff_h / 4.0     # distancia entre líneas del pentagrama
+        half_sp  = line_sp / 2.0     # un paso diatónico = medio espacio
+
+        # Y de la línea inferior (mayor valor Y = más abajo en pantalla)
+        y_bottom = MARGIN_Y + staff_h
+        # Las 5 líneas, de inferior (step=0) a superior (step=8)
+        y_lines  = [y_bottom - i * line_sp for i in range(5)]
+
+        # ── Líneas del pentagrama ───────────────────────────────────────
+        C_STAFF = (65, 65, 85)
+        for y_line in y_lines:
+            pygame.draw.line(surf, C_STAFF,
+                             (0, int(y_line)), (img_w, int(y_line)), 1)
+
+        # ── Líneas de compás ────────────────────────────────────────────
+        C_BAR    = (45, 45, 65)
+        bar_cnt  = int(total_ql / max(bar_ql, 0.01)) + 2
+        for i in range(bar_cnt + 1):
+            x_bar = int(i * bar_ql / total_ql * img_w)
+            pygame.draw.line(surf, C_BAR,
+                             (x_bar, int(y_lines[0])),
+                             (x_bar, int(y_lines[-1])), 1)
+
+        # ── Notas ───────────────────────────────────────────────────────
+        r_note   = max(3, int(half_sp * 0.85))
+        C_NOTE   = (188, 188, 210)
+        C_LEDGER = (95, 95, 115)
+
+        for n in m21_notes:
+            x = int(n['offset_ql'] / total_ql * img_w)
+
+            # Paso diatónico desde la línea inferior del pentagrama
+            # (0 = línea1, 2 = línea2, 4 = línea central, 6 = línea4, 8 = línea5)
+            steps  = (n['diatonic'] + diatonic_offset) - bottom_diatonic
+            y_note = int(y_bottom - steps * half_sp)
+
+            # ── Líneas auxiliares ───────────────────────────────────────
+            ledger_w = r_note * 3
+            if steps < 0:          # por debajo del pentagrama
+                s = -2
+                while s >= steps:
+                    pygame.draw.line(surf, C_LEDGER,
+                        (x - ledger_w, int(y_bottom - s * half_sp)),
+                        (x + ledger_w, int(y_bottom - s * half_sp)), 1)
+                    s -= 2
+            elif steps > 8:        # por encima del pentagrama
+                s = 10
+                while s <= steps:
+                    pygame.draw.line(surf, C_LEDGER,
+                        (x - ledger_w, int(y_bottom - s * half_sp)),
+                        (x + ledger_w, int(y_bottom - s * half_sp)), 1)
+                    s += 2
+
+            # ── Cabeza de nota ──────────────────────────────────────────
+            dur  = n['duration_ql']
+            rx, ry = r_note, max(2, int(r_note * 0.68))
+            rect = (x - rx, y_note - ry, rx * 2, ry * 2)
+            if dur >= 2.0:     # blanca / redonda: hueca
+                pygame.draw.ellipse(surf, C_NOTE, rect, 1)
+            else:              # negra / menor: rellena
+                pygame.draw.ellipse(surf, C_NOTE, rect)
+
+            # ── Plica ───────────────────────────────────────────────────
+            if dur < 4.0:      # las redondas no tienen plica
+                stem_up  = steps < 4
+                stem_x   = x + rx if stem_up else x - rx
+                stem_end = (y_note - int(line_sp * 3) if stem_up
+                            else y_note + int(line_sp * 3))
+                pygame.draw.line(surf, C_NOTE,
+                                 (stem_x, y_note), (stem_x, stem_end), 1)
+
+        return surf
+
     # ── Partitura (pentagrama scrolleable) ──────────────────────────────
     def _draw_score(self):
         """
@@ -1589,7 +1829,8 @@ class BassKaraoke:
                 (CURSOR_X + 5, SY + SCORE_H - 6),
                 (CURSOR_X,     SY + SCORE_H - 14)])
 
-            lbl = self.font_tiny.render("PARTITURA  (Verovio)", True, C_GRAY)
+            lbl = self.font_tiny.render(
+                f"PARTITURA  ({self.score_renderer.capitalize()})", True, C_GRAY)
             self.screen.blit(lbl, (4, SY + 2))
 
         else:
@@ -2459,6 +2700,28 @@ class BassKaraoke:
                     elif k == pygame.K_p:
                         self.pitch_menu_open = not self.pitch_menu_open
                         self.pitch_menu_sel  = PITCH_METHODS.index(self.pitch_method)
+                    elif k == pygame.K_s:
+                        # Cambiar renderer de partitura (Verovio ↔ Music21)
+                        available = []
+                        if VEROVIO_OK and CAIROSVG_OK: available.append("verovio")
+                        if MUSIC21_OK:                  available.append("music21")
+                        if len(available) >= 2:
+                            cur = (self.score_renderer
+                                   if self.score_renderer in available
+                                   else available[0])
+                            self.score_renderer  = available[
+                                (available.index(cur) + 1) % len(available)]
+                            self._score_surf     = None
+                            self._score_note_xs  = []
+                            self._score_scroll_x = 0.0
+                            self._score_loading  = True
+                            _r = self.score_renderer
+                            def _reload(r=_r):
+                                if r == "verovio":
+                                    self._init_score_surface()
+                                else:
+                                    self._init_score_surface_music21()
+                            threading.Thread(target=_reload, daemon=True).start()
                     elif k == pygame.K_F5:     self._save_config()
                     elif k == pygame.K_F6:
                         self._load_config()
