@@ -64,6 +64,18 @@ CAIROSVG_OK = False
 try:
     import verovio as _verovio_mod
     VEROVIO_OK = True
+    # ── Asegurar que tuning-glyphnames.json está en el data dir de Verovio ──
+    # El archivo es necesario para que Verovio resuelva glifos SMuFL cuando
+    # el MusicXML viene de TuxGuitar u otras herramientas con custom tuning.
+    # Lo incluimos en el proyecto para que el usuario no tenga que crearlo.
+    import shutil as _shutil
+    _vrv_data   = os.path.join(os.path.dirname(_verovio_mod.__file__), "data")
+    _tgn_dst    = os.path.join(_vrv_data, "tuning-glyphnames.json")
+    _tgn_src    = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "tuning-glyphnames.json")
+    if not os.path.exists(_tgn_dst) and os.path.exists(_tgn_src):
+        _shutil.copy2(_tgn_src, _tgn_dst)
+        print("[Verovio] tuning-glyphnames.json instalado en", _vrv_data)
 except ImportError:
     print("[WARN] verovio no encontrado — pip install verovio")
 try:
