@@ -344,12 +344,29 @@ def parse_musicxml(filepath):
                         hz      = fret_to_hz(fret, string)
                         start16 = round((measure_abs + cur_pos) / divs * 4)
                         dur16   = max(1, round(dur_divs / divs * 4))
+                        # Extraer step/octave/alter para posición en pentagrama
+                        pitch_el = child.find("pitch")
+                        p_step   = "C"
+                        p_octave = 3
+                        p_alter  = 0
+                        if pitch_el is not None:
+                            se = pitch_el.find("step")
+                            oe = pitch_el.find("octave")
+                            ae = pitch_el.find("alter")
+                            if se is not None: p_step   = se.text.strip()
+                            if oe is not None: p_octave = int(oe.text)
+                            if ae is not None: p_alter  = int(float(ae.text))
+                        # Tipo de figura para cabeza hueca/rellena
+                        type_el  = child.find("type")
+                        dur_type = type_el.text.strip() if type_el is not None else "quarter"
                         notes.append({
                             "fret": fret, "string": string,
                             "dur": dur16, "start16": start16,
                             "hz": hz, "note_name": hz_to_note_name(hz),
                             "measure_num": measure_num,
                             "section": f"Compás {measure_num}",
+                            "step": p_step, "octave": p_octave, "alter": p_alter,
+                            "dur_type": dur_type,
                         })
                     if not is_chord:
                         cur_pos += dur_divs
@@ -432,8 +449,10 @@ BPM_ORIGINAL  = 113.0   # tempo nativo del MP3 / MusicXML
 HEADER_H  = 55
 TAB_Y     = HEADER_H + 3
 TAB_H     = 252
+SCORE_H   = 120   # altura de la sub-zona de partitura dentro de TAB
+TAB_TOTAL = TAB_H + SCORE_H + 8
 
-NECK_Y    = TAB_Y + TAB_H + 16
+NECK_Y    = TAB_Y + TAB_TOTAL + 16
 NECK_H    = 108
 NECK_W    = 726
 
@@ -1093,6 +1112,7 @@ class BassKaraoke:
         self.screen.fill(C_BG)
         self._draw_header()
         self._draw_tab()
+        self._draw_score()
         self._draw_neck()
         self._draw_piano()
         self._draw_note_panel()
@@ -1289,6 +1309,174 @@ class BassKaraoke:
 
         pygame.draw.line(self.screen, C_DGRAY,
                          (0, TAB_Y + TAB_H), (W, TAB_Y + TAB_H), 1)
+
+    # ── Partitura (pentagrama scrolleable) ──────────────────────────────
+    def _draw_score(self):
+        """
+        Dibuja un pentagrama de bajo (clave de Fa) justo debajo de la tablatura.
+        Las notas se desplazan con el mismo viewport que la tab.
+        """
+        CURSOR_X = W // 3
+        SY       = TAB_Y + TAB_H + 8      # Y de inicio del área de partitura
+        SH       = SCORE_H                 # altura total del área
+        LINE_SEP = 9                       # separación entre líneas del pentagrama (px)
+        # 5 líneas del pentagrama, centradas verticalmente en el área
+        LINES    = 5
+        staff_h  = (LINES - 1) * LINE_SEP
+        staff_y0 = SY + (SH - staff_h) // 2   # Y de la línea más alta (1ª línea)
+
+        # Fondo
+        pygame.draw.rect(self.screen, (13, 13, 22), (0, SY, W, SH))
+
+        # ── Clave de Fa (texto) ─────────────────────────────────────────
+        CLEF_W = 38
+        clef_font = pygame.font.SysFont("segoe ui symbol,dejavu sans,arial", 42)
+        clef_surf = clef_font.render("𝄢", True, C_GRAY)
+        self.screen.blit(clef_surf, (4, staff_y0 - 6))
+        # líneas del pentagrama en la zona del clef también
+        for li in range(LINES):
+            ly = staff_y0 + li * LINE_SEP
+            pygame.draw.line(self.screen, C_DGRAY, (0, ly), (W, ly), 1)
+
+        # ── Regla de posición en el pentagrama (bajo, clave de Fa) ─────
+        # En clave de Fa 4ª línea: la 4ª línea (índice 3 desde abajo, o índice 1 desde arriba)
+        # es la nota Si2. Cada semipaso diatónico sube/baja media ranura (LINE_SEP/2).
+        # Orden diatónico: C=0,D=1,E=2,F=3,G=4,A=5,B=6
+        STEP_IDX = {"C": 0, "D": 1, "E": 2, "F": 3, "G": 4, "A": 5, "B": 6}
+        # La 4ª línea (contando desde abajo, índice 3) = B2 (Si2)
+        # En nuestro sistema: línea 0 = top = 1ª línea staff.
+        # Línea 3 desde abajo = línea índice 1 desde arriba (0-based).
+        # B2 → octave=2, step=B → diatonic_pos = 2*7 + 6 = 20
+        REF_DIATONIC = 2 * 7 + 6   # B2
+        REF_LINE_Y   = staff_y0 + 1 * LINE_SEP   # línea índice 1 desde arriba
+
+        def note_y(step, octave):
+            """Y del centro de la cabeza de la nota en el pentagrama."""
+            d = octave * 7 + STEP_IDX[step]
+            diff = d - REF_DIATONIC   # cuántos pasos diatónicos sobre la referencia
+            return REF_LINE_Y - diff * (LINE_SEP / 2)
+
+        def ledger_lines(ny_pos):
+            """Dibuja líneas suplementarias si la nota está fuera del pentagrama."""
+            lines_needed = []
+            top_line_y    = staff_y0
+            bottom_line_y = staff_y0 + (LINES - 1) * LINE_SEP
+            half = LINE_SEP / 2
+            # Por encima
+            y = top_line_y - LINE_SEP
+            while y >= ny_pos - half + 1:
+                lines_needed.append(int(y))
+                y -= LINE_SEP
+            # Por debajo
+            y = bottom_line_y + LINE_SEP
+            while y <= ny_pos + half - 1:
+                lines_needed.append(int(y))
+                y += LINE_SEP
+            return lines_needed
+
+        vx = int(self.viewport_x)
+
+        # ── Barras de compás ────────────────────────────────────────────
+        prev_meas = -1
+        for note in self.notes:
+            if note["measure_num"] != prev_meas:
+                prev_meas = note["measure_num"]
+                mx2 = self.px_of(note["start16"]) - vx + CURSOR_X
+                if 30 < mx2 < W:
+                    pygame.draw.line(self.screen, (55, 55, 80),
+                                     (mx2 - 2, staff_y0),
+                                     (mx2 - 2, staff_y0 + staff_h), 1)
+
+        # ── Notas ───────────────────────────────────────────────────────
+        for i, note in enumerate(self.notes):
+            nx2 = self.px_of(note["start16"]) - vx + CURSOR_X
+            if nx2 < -20 or nx2 > W + 20:
+                continue
+
+            is_cur  = (i == self.note_idx)
+            is_past = (i < self.note_idx)
+            step    = note.get("step",   "C")
+            octave  = note.get("octave",  3)
+            alter   = note.get("alter",   0)
+            dur_type = note.get("dur_type", "quarter")
+
+            ny_pos  = note_y(step, octave)
+
+            # Color igual que la tab
+            if is_cur:
+                col = (C_OK  if self.note_match is True  else
+                       C_ERR if self.note_match is False else C_WAIT)
+            elif is_past:
+                col = (38, 38, 60)
+            else:
+                col = STRING_COLORS[note["string"]]
+
+            # Líneas suplementarias
+            for ll_y in ledger_lines(ny_pos):
+                lx0 = nx2 - 9
+                lx1 = nx2 + 9
+                lc  = (55, 55, 80) if is_past else C_DGRAY
+                pygame.draw.line(self.screen, lc, (lx0, ll_y), (lx1, ll_y), 1)
+
+            # Cabeza de nota: hueca para blanca/redonda, rellena para negra/corchea/etc.
+            hollow = dur_type in ("half", "whole")
+            head_w, head_h = 8, 6
+            head_rect = pygame.Rect(nx2 - head_w // 2, int(ny_pos) - head_h // 2,
+                                    head_w, head_h)
+            if hollow:
+                pygame.draw.ellipse(self.screen, col, head_rect, 2)
+            else:
+                pygame.draw.ellipse(self.screen, col, head_rect)
+
+            # Plica (stem) — hacia arriba si nota baja, hacia abajo si nota alta
+            if dur_type != "whole":
+                stem_len = LINE_SEP * 3
+                mid_staff = staff_y0 + staff_h / 2
+                if ny_pos >= mid_staff:
+                    # Plica hacia arriba
+                    pygame.draw.line(self.screen, col,
+                                     (nx2 + head_w // 2 - 1, int(ny_pos)),
+                                     (nx2 + head_w // 2 - 1, int(ny_pos) - stem_len), 1)
+                    # Corchea: banderín
+                    if dur_type in ("eighth", "16th"):
+                        flag_x = nx2 + head_w // 2 - 1
+                        flag_y = int(ny_pos) - stem_len
+                        pygame.draw.arc(self.screen, col,
+                                        pygame.Rect(flag_x, flag_y, 8, 10),
+                                        -0.5, 1.6, 1)
+                else:
+                    # Plica hacia abajo
+                    pygame.draw.line(self.screen, col,
+                                     (nx2 - head_w // 2 + 1, int(ny_pos)),
+                                     (nx2 - head_w // 2 + 1, int(ny_pos) + stem_len), 1)
+                    if dur_type in ("eighth", "16th"):
+                        flag_x = nx2 - head_w // 2 + 1
+                        flag_y = int(ny_pos) + stem_len - 10
+                        pygame.draw.arc(self.screen, col,
+                                        pygame.Rect(flag_x - 8, flag_y, 8, 10),
+                                        1.6, 3.7, 1)
+
+            # Alteración (sostenido / bemol)
+            if alter != 0 and not is_past:
+                acc_str = "#" if alter > 0 else "b"
+                acc_t   = self.font_tiny.render(acc_str, True, col)
+                self.screen.blit(acc_t, (nx2 - head_w // 2 - acc_t.get_width() - 1,
+                                          int(ny_pos) - acc_t.get_height() // 2))
+
+            # Pulso de la nota actual
+            if is_cur:
+                pulse = 0.5 + 0.5 * math.sin(time.time() * 9)
+                hr    = int(9 + pulse * 3)
+                hs    = pygame.Surface((hr * 2, hr * 2), pygame.SRCALPHA)
+                pygame.draw.circle(hs, (*col, 40), (hr, hr), hr)
+                self.screen.blit(hs, (nx2 - hr, int(ny_pos) - hr))
+
+        # Borde inferior del área
+        pygame.draw.line(self.screen, C_DGRAY,
+                         (0, SY + SH - 1), (W, SY + SH - 1), 1)
+        # Etiqueta
+        lbl_s = self.font_tiny.render("PARTITURA  (clave de Fa)", True, C_GRAY)
+        self.screen.blit(lbl_s, (CLEF_W + 4, SY + 2))
 
     # ── Mástil del bajo ─────────────────────────────────────────────────
     def _draw_neck(self):
