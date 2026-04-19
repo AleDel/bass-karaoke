@@ -1,0 +1,41 @@
+# ══════════════════════════════════════════════════════════════════
+#  Bass Karaoke v3  —  requirements.txt
+#  Probado en Python 3.10/3.11 · Windows 11
+# ══════════════════════════════════════════════════════════════════
+
+# ── Núcleo (obligatorio) ──────────────────────────────────────────
+pygame==2.6.1
+numpy==1.26.4
+
+# ── Audio / pitch (recomendado) ───────────────────────────────────
+PyAudio==0.2.14           # captura de micrófono (requiere PortAudio)
+aubio==0.5.0a0            # detección de pitch YINfast (CPU)
+
+# ── Time-stretch del MP3 (recomendado) ───────────────────────────
+librosa==0.11.0
+sounddevice==0.5.2
+
+# ── Partitura renderizada (recomendado) ──────────────────────────
+verovio==6.1.0            # render MusicXML → SVG
+CairoSVG==2.9.0           # SVG → PNG  (requiere GTK/Cairo en Windows:
+                          #   https://github.com/preshing/cairo-windows)
+
+# ── Métodos de pitch alternativos (opcionales) ───────────────────
+
+# CREPE (GPU recomendado)
+torchcrepe==0.0.24
+
+# PESTO streaming (GPU recomendado)
+pesto-pitch==2.0.1
+
+# PyTorch — instalar MANUALMENTE según tu GPU:
+#   CPU:    pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   CUDA 12.4: pip install torch --index-url https://download.pytorch.org/whl/cu124
+# torch==2.6.0+cu124
+
+# PESTO-ONNX (CPU, sin PyTorch en inferencia)
+onnxruntime==1.23.2
+
+# Basic Pitch — Spotify (ONNX en Windows)
+basic-pitch==0.4.0
+soundfile==0.13.1

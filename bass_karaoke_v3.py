@@ -58,6 +58,20 @@ except ImportError:
     VARSPEED_OK = False
     print("[WARN] librosa/sounddevice no encontrados — tempo MP3 fijo")
 
+# ─── Verovio + cairosvg  (partitura renderizada en alta calidad) ─────────────
+VEROVIO_OK  = False
+CAIROSVG_OK = False
+try:
+    import verovio as _verovio_mod
+    VEROVIO_OK = True
+except ImportError:
+    print("[WARN] verovio no encontrado — pip install verovio")
+try:
+    import cairosvg as _cairosvg_mod
+    CAIROSVG_OK = True
+except ImportError:
+    print("[WARN] cairosvg no encontrado — pip install cairosvg")
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PARÁMETROS DE AUDIO (bajo eléctrico)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -441,7 +455,7 @@ def build_piano_keys(start_midi, end_midi, px, py, pw, ph):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CONSTANTES DE UI
 # ═══════════════════════════════════════════════════════════════════════════════
-W, H          = 1280, 800
+W, H          = 1280, 900
 FPS           = 60
 BPM_DEFAULT   = 113
 BPM_ORIGINAL  = 113.0   # tempo nativo del MP3 / MusicXML
@@ -449,7 +463,7 @@ BPM_ORIGINAL  = 113.0   # tempo nativo del MP3 / MusicXML
 HEADER_H  = 55
 TAB_Y     = HEADER_H + 3
 TAB_H     = 252
-SCORE_H   = 120   # altura de la sub-zona de partitura dentro de TAB
+SCORE_H   = 180   # altura de la sub-zona de partitura dentro de TAB
 TAB_TOTAL = TAB_H + SCORE_H + 8
 
 NECK_Y    = TAB_Y + TAB_TOTAL + 16
@@ -587,6 +601,16 @@ class BassKaraoke:
         self.notes    = []
         self.sections = []
         self._load_notes()
+
+        # ── Score pre-render (Verovio) ──────────────────────────────────
+        self._score_surf     = None   # pygame Surface con partitura renderizada
+        self._score_note_xs  = []     # [(start16, pixel_x), …] para scroll exacto
+        self._score_scroll_x = 0.0   # posición de scroll actual (suavizada)
+        self._score_total16  = (
+            (self.notes[-1]["start16"] + self.notes[-1]["dur"]) if self.notes else 1
+        )
+        if VEROVIO_OK and CAIROSVG_OK:
+            self._init_score_surface()
 
         # ── Piano (precalcular) ─────────────────────────────────────────
         self._piano_keys_list = []   # se rellena en draw (necesita pygame.Rect)
@@ -1310,73 +1334,298 @@ class BassKaraoke:
         pygame.draw.line(self.screen, C_DGRAY,
                          (0, TAB_Y + TAB_H), (W, TAB_Y + TAB_H), 1)
 
+    # ── Inicialización Verovio ────────────────────────────────────────────
+    @staticmethod
+    def _strip_tab_staff(xml_str):
+        """Elimina el staff de tablatura (staff 2) del MusicXML para que
+        Verovio sólo renderice la notación estándar (staff 1)."""
+        import re as _re
+        # ElementTree no soporta DOCTYPE; lo eliminamos antes de parsear
+        xml_clean = _re.sub(r'<!DOCTYPE[^[>]*(?:\[[^\]]*\])?[^>]*>', '', xml_str)
+        try:
+            root = ET.fromstring(xml_clean)
+        except ET.ParseError:
+            return xml_str   # si falla, devolver sin cambios
+
+        for part in root.iter('part'):
+            for measure in part.findall('measure'):
+                # Corregir metadatos del staff 2 en <attributes>
+                for attrs in measure.findall('attributes'):
+                    staves_el = attrs.find('staves')
+                    if staves_el is not None:
+                        staves_el.text = '1'
+                    for clef in list(attrs.findall('clef')):
+                        if clef.get('number') == '2':
+                            attrs.remove(clef)
+                    for sd in list(attrs.findall('staff-details')):
+                        if sd.get('number') == '2':
+                            attrs.remove(sd)
+
+                # Eliminar notas de staff 2 y el <backup> que las precede
+                children = list(measure)
+                remove_set = set()
+                last_backup_idx = None
+                for idx, child in enumerate(children):
+                    if child.tag == 'backup':
+                        last_backup_idx = idx
+                    elif child.tag == 'note':
+                        staff_el = child.find('staff')
+                        if staff_el is not None and staff_el.text == '2':
+                            remove_set.add(idx)
+                            if last_backup_idx is not None:
+                                remove_set.add(last_backup_idx)
+                                last_backup_idx = None
+                        else:
+                            last_backup_idx = None
+                for idx in sorted(remove_set, reverse=True):
+                    measure.remove(children[idx])
+
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding='unicode')
+
+    def _init_score_surface(self):
+        """
+        Pre-renderiza el MusicXML con Verovio → cairosvg → pygame.Surface.
+        Extrae las posiciones X de cada nota desde el SVG para scroll exacto.
+        Coloriza para tema oscuro (fondo transparente, notas gris-azulado).
+        """
+        try:
+            import verovio, cairosvg, re
+            from io import BytesIO
+
+            vrv = verovio.toolkit()
+            # Apuntar a los recursos SMuFL que vienen con el paquete
+            import os as _os
+            _vrv_data = _os.path.join(_os.path.dirname(verovio.__file__), "data")
+            vrv.setResourcePath(_vrv_data)
+            vrv.setOptions({
+                "pageWidth":      100000,   # máximo soportado
+                "pageHeight":     2000,
+                "adjustPageHeight": True,
+                "breaks":         "none",
+                "scale":          50,
+                "spacingLinear":  0.20,
+                "footer":         "none",
+                "header":         "none",
+            })
+
+            with open(MUSICXML_PATH, "r", encoding="utf-8") as f:
+                raw_xml = f.read()
+            # Eliminar staff 2 (tab) para evitar errores de custom-tuning en Verovio
+            clean_xml = self._strip_tab_staff(raw_xml)
+            vrv.loadData(clean_xml)
+
+            svg_str = vrv.renderToSVG(1)
+
+            # ── Parsear SVG para extraer X de cada nota ───────────────────
+            root_svg = ET.fromstring(svg_str)
+
+            # En Verovio 6.x el SVG raíz no tiene viewBox propio;
+            # el viewBox real está en el <svg class="definition-scale"> anidado.
+            def _find_inner_svg(el):
+                for ch in el:
+                    tag = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
+                    if tag == "svg" and "definition-scale" in (ch.get("class") or ""):
+                        return ch
+                    result = _find_inner_svg(ch)
+                    if result is not None:
+                        return result
+                return None
+            inner_svg = _find_inner_svg(root_svg) or root_svg
+            vb = inner_svg.get("viewBox", "0 0 10000 1000")
+            vb_parts = [float(v) for v in vb.split()]
+            vb_w, vb_h = vb_parts[2], vb_parts[3]
+
+            def get_tx(el):
+                m = re.search(r"translate\(\s*([-\d.eE+]+)", el.get("transform", ""))
+                return float(m.group(1)) if m else 0.0
+
+            note_xs_staff1, note_xs_all = [], []
+
+            def walk(el, cx, staff_num=None):
+                tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+                if tag == "defs":
+                    return
+                cx2      = cx + get_tx(el)
+                cls      = (el.get("class") or "").split()
+                el_id    = el.get("id", "")
+                cur_stf  = staff_num
+                if "staff" in cls:
+                    m = re.search(r"-(\d+)$", el_id)
+                    if m:
+                        cur_stf = int(m.group(1))
+                if "note" in cls:
+                    # Verovio 6.x: el <g class="note"> no tiene transform.
+                    # La posición X real está en el primer <use> dentro de
+                    # <g class="notehead">. Sumamos cx (acumulado de ancestros).
+                    note_x = cx2   # fallback si no se encuentra use
+                    for child in el:
+                        if "notehead" in (child.get("class") or "").split():
+                            for gc in child:
+                                tx = re.search(r"translate\(\s*([-\d.eE+]+)",
+                                               gc.get("transform", ""))
+                                if tx:
+                                    note_x = cx + float(tx.group(1))
+                                    break
+                            break
+                    note_xs_all.append(note_x)
+                    if cur_stf == 1:
+                        note_xs_staff1.append(note_x)
+                    return   # no recursionar en subelementos de nota
+                for ch in el:
+                    walk(ch, cx2, cur_stf)
+
+            walk(root_svg, 0.0)
+
+            # Elegir el conjunto que coincide con nuestras notas parseadas
+            note_xs = (note_xs_staff1
+                       if len(note_xs_staff1) == len(self.notes)
+                       else note_xs_all)
+
+            # ── Renderizar SVG → PNG ───────────────────────────────────────
+            # Eliminar elementos <text> (letras, tempo, marcas) antes de
+            # pasar a cairosvg: Cairo/GDI en Windows no puede resolver
+            # fuentes como "Times" o "Leipzig" y entra en CAIRO_STATUS_NO_MEMORY.
+            # Los elementos <use> con paths SVG se mantienen (notas, pentagramas).
+            svg_str = re.sub(r'<text\b[^>]*>.*?</text>', '', svg_str, flags=re.DOTALL)
+            target_h  = SCORE_H - 4
+            png_bytes = cairosvg.svg2png(
+                bytestring=svg_str.encode(),
+                output_height=target_h,
+            )
+            surf = pygame.image.load(BytesIO(png_bytes)).convert_alpha()
+
+            scale_x = surf.get_width() / vb_w   # unidades SVG → píxeles PNG
+
+            # ── Colorizar para tema oscuro ─────────────────────────────────
+            # cairosvg genera PNG con fondo transparente (alpha=0) y notas
+            # negras opacas (alpha>0). Colorizar: notas → gris-azulado claro.
+            arr   = pygame.surfarray.pixels3d(surf)
+            alpha = pygame.surfarray.pixels_alpha(surf)
+            ink = alpha > 20          # True = pixel de nota/línea
+            arr[ink]   = [188, 188, 210]
+            arr[~ink]  = [0, 0, 0]
+            alpha[ink] = 220
+            # alpha[~ink] ya es ≈0 (transparente), no tocar
+            del arr, alpha
+
+            self._score_surf = surf
+
+            # ── Mapeo nota → pixel X ──────────────────────────────────────
+            n = min(len(self.notes), len(note_xs))
+            self._score_note_xs = [
+                (self.notes[i]["start16"], note_xs[i] * scale_x)
+                for i in range(n)
+            ]
+            print(f"[Verovio] {surf.get_width()}×{surf.get_height()}px  "
+                  f"notas mapeadas={n}/{len(self.notes)}")
+
+        except Exception as _e:
+            print(f"[Verovio ERROR] {_e}")
+            import traceback; traceback.print_exc()
+            self._score_surf    = None
+            self._score_note_xs = []
+
     # ── Partitura (pentagrama scrolleable) ──────────────────────────────
     def _draw_score(self):
         """
-        Dibuja un pentagrama de bajo (clave de Fa) justo debajo de la tablatura.
-        Las notas se desplazan con el mismo viewport que la tab.
+        Dibuja la partitura: usa Verovio si está disponible, si no el pentagrama manual.
         """
         CURSOR_X = W // 3
-        SY       = TAB_Y + TAB_H + 8      # Y de inicio del área de partitura
-        SH       = SCORE_H                 # altura total del área
-        LINE_SEP = 9                       # separación entre líneas del pentagrama (px)
-        # 5 líneas del pentagrama, centradas verticalmente en el área
+        SY = TAB_Y + TAB_H + 8
+
+        pygame.draw.rect(self.screen, (13, 13, 22), (0, SY, W, SCORE_H))
+
+        if self._score_surf is not None:
+            # ── Partitura renderizada con Verovio ─────────────────────
+            xs = self._score_note_xs
+
+            def beat_to_img_x(b16):
+                """Interpola la posición X en la imagen para el beat_time actual."""
+                if not xs:
+                    total = self._score_total16 or 1
+                    margin = self._score_surf.get_width() * 0.04
+                    return margin + max(0, b16) / total * (self._score_surf.get_width() - margin)
+                if b16 <= xs[0][0]:
+                    return xs[0][1]
+                if b16 >= xs[-1][0]:
+                    return xs[-1][1]
+                for i in range(len(xs) - 1):
+                    b0, x0 = xs[i]
+                    b1, x1 = xs[i + 1]
+                    if b0 <= b16 <= b1:
+                        t = (b16 - b0) / (b1 - b0) if b1 > b0 else 0.0
+                        return x0 + t * (x1 - x0)
+                return xs[-1][1]
+
+            target_x = beat_to_img_x(self.beat_time)
+            # Suavizado (mismo rate que viewport_x ~dt*9 a 60fps)
+            self._score_scroll_x += (target_x - self._score_scroll_x) * 0.15
+
+            blit_x = CURSOR_X - int(self._score_scroll_x)
+
+            # Recortar al área del score para no pintar fuera
+            clip = pygame.Rect(0, SY, W, SCORE_H)
+            self.screen.set_clip(clip)
+            self.screen.blit(self._score_surf, (blit_x, SY + 2))
+            self.screen.set_clip(None)
+
+            # Cursor (línea + triángulo abajo)
+            pygame.draw.line(self.screen, C_ACCENT,
+                             (CURSOR_X, SY + 2), (CURSOR_X, SY + SCORE_H - 6), 2)
+            pygame.draw.polygon(self.screen, C_ACCENT, [
+                (CURSOR_X - 5, SY + SCORE_H - 6),
+                (CURSOR_X + 5, SY + SCORE_H - 6),
+                (CURSOR_X,     SY + SCORE_H - 14)])
+
+            lbl = self.font_tiny.render("PARTITURA  (Verovio)", True, C_GRAY)
+            self.screen.blit(lbl, (4, SY + 2))
+
+        else:
+            # ── Pentagrama manual (fallback si Verovio no está instalado) ─
+            self._draw_score_manual(SY, CURSOR_X)
+
+        pygame.draw.line(self.screen, C_DGRAY,
+                         (0, SY + SCORE_H - 1), (W, SY + SCORE_H - 1), 1)
+
+    def _draw_score_manual(self, SY, CURSOR_X):
+        """Pentagrama dibujado a mano (fallback cuando Verovio no está disponible)."""
+        SH       = SCORE_H
+        LINE_SEP = 9
         LINES    = 5
         staff_h  = (LINES - 1) * LINE_SEP
-        staff_y0 = SY + (SH - staff_h) // 2   # Y de la línea más alta (1ª línea)
+        staff_y0 = SY + (SH - staff_h) // 2
 
-        # Fondo
-        pygame.draw.rect(self.screen, (13, 13, 22), (0, SY, W, SH))
-
-        # ── Clave de Fa (texto) ─────────────────────────────────────────
-        CLEF_W = 38
+        CLEF_W    = 38
         clef_font = pygame.font.SysFont("segoe ui symbol,dejavu sans,arial", 42)
         clef_surf = clef_font.render("𝄢", True, C_GRAY)
         self.screen.blit(clef_surf, (4, staff_y0 - 6))
-        # líneas del pentagrama en la zona del clef también
         for li in range(LINES):
-            ly = staff_y0 + li * LINE_SEP
-            pygame.draw.line(self.screen, C_DGRAY, (0, ly), (W, ly), 1)
+            pygame.draw.line(self.screen, C_DGRAY,
+                             (0, staff_y0 + li * LINE_SEP),
+                             (W, staff_y0 + li * LINE_SEP), 1)
 
-        # ── Regla de posición en el pentagrama (bajo, clave de Fa) ─────
-        # En clave de Fa 4ª línea: la 4ª línea (índice 3 desde abajo, o índice 1 desde arriba)
-        # es la nota Si2. Cada semipaso diatónico sube/baja media ranura (LINE_SEP/2).
-        # Orden diatónico: C=0,D=1,E=2,F=3,G=4,A=5,B=6
-        STEP_IDX = {"C": 0, "D": 1, "E": 2, "F": 3, "G": 4, "A": 5, "B": 6}
-        # La 4ª línea (contando desde abajo, índice 3) = B2 (Si2)
-        # En nuestro sistema: línea 0 = top = 1ª línea staff.
-        # Línea 3 desde abajo = línea índice 1 desde arriba (0-based).
-        # B2 → octave=2, step=B → diatonic_pos = 2*7 + 6 = 20
-        REF_DIATONIC = 2 * 7 + 6   # B2
-        REF_LINE_Y   = staff_y0 + 1 * LINE_SEP   # línea índice 1 desde arriba
+        STEP_IDX     = {"C": 0, "D": 1, "E": 2, "F": 3, "G": 4, "A": 5, "B": 6}
+        REF_DIATONIC = 2 * 7 + 6
+        REF_LINE_Y   = staff_y0 + LINE_SEP
 
         def note_y(step, octave):
-            """Y del centro de la cabeza de la nota en el pentagrama."""
-            d = octave * 7 + STEP_IDX[step]
-            diff = d - REF_DIATONIC   # cuántos pasos diatónicos sobre la referencia
+            d    = octave * 7 + STEP_IDX[step]
+            diff = d - REF_DIATONIC
             return REF_LINE_Y - diff * (LINE_SEP / 2)
 
         def ledger_lines(ny_pos):
-            """Dibuja líneas suplementarias si la nota está fuera del pentagrama."""
-            lines_needed = []
-            top_line_y    = staff_y0
-            bottom_line_y = staff_y0 + (LINES - 1) * LINE_SEP
-            half = LINE_SEP / 2
-            # Por encima
-            y = top_line_y - LINE_SEP
+            lines = []
+            top_y = staff_y0;  bot_y = staff_y0 + (LINES - 1) * LINE_SEP
+            half  = LINE_SEP / 2
+            y = top_y - LINE_SEP
             while y >= ny_pos - half + 1:
-                lines_needed.append(int(y))
-                y -= LINE_SEP
-            # Por debajo
-            y = bottom_line_y + LINE_SEP
+                lines.append(int(y)); y -= LINE_SEP
+            y = bot_y + LINE_SEP
             while y <= ny_pos + half - 1:
-                lines_needed.append(int(y))
-                y += LINE_SEP
-            return lines_needed
+                lines.append(int(y)); y += LINE_SEP
+            return lines
 
         vx = int(self.viewport_x)
-
-        # ── Barras de compás ────────────────────────────────────────────
         prev_meas = -1
         for note in self.notes:
             if note["measure_num"] != prev_meas:
@@ -1387,95 +1636,54 @@ class BassKaraoke:
                                      (mx2 - 2, staff_y0),
                                      (mx2 - 2, staff_y0 + staff_h), 1)
 
-        # ── Notas ───────────────────────────────────────────────────────
         for i, note in enumerate(self.notes):
             nx2 = self.px_of(note["start16"]) - vx + CURSOR_X
             if nx2 < -20 or nx2 > W + 20:
                 continue
-
-            is_cur  = (i == self.note_idx)
-            is_past = (i < self.note_idx)
-            step    = note.get("step",   "C")
-            octave  = note.get("octave",  3)
-            alter   = note.get("alter",   0)
+            is_cur   = (i == self.note_idx)
+            is_past  = (i < self.note_idx)
+            step     = note.get("step", "C")
+            octave   = note.get("octave", 3)
+            alter    = note.get("alter", 0)
             dur_type = note.get("dur_type", "quarter")
-
-            ny_pos  = note_y(step, octave)
-
-            # Color igual que la tab
-            if is_cur:
-                col = (C_OK  if self.note_match is True  else
-                       C_ERR if self.note_match is False else C_WAIT)
-            elif is_past:
-                col = (38, 38, 60)
-            else:
-                col = STRING_COLORS[note["string"]]
-
-            # Líneas suplementarias
+            ny_pos   = note_y(step, octave)
+            col = (C_OK if self.note_match is True else
+                   C_ERR if self.note_match is False else C_WAIT) if is_cur else (
+                  (38, 38, 60) if is_past else STRING_COLORS[note["string"]])
             for ll_y in ledger_lines(ny_pos):
-                lx0 = nx2 - 9
-                lx1 = nx2 + 9
-                lc  = (55, 55, 80) if is_past else C_DGRAY
-                pygame.draw.line(self.screen, lc, (lx0, ll_y), (lx1, ll_y), 1)
-
-            # Cabeza de nota: hueca para blanca/redonda, rellena para negra/corchea/etc.
-            hollow = dur_type in ("half", "whole")
-            head_w, head_h = 8, 6
-            head_rect = pygame.Rect(nx2 - head_w // 2, int(ny_pos) - head_h // 2,
-                                    head_w, head_h)
+                lc = (55, 55, 80) if is_past else C_DGRAY
+                pygame.draw.line(self.screen, lc,
+                                 (nx2 - 9, ll_y), (nx2 + 9, ll_y), 1)
+            hw, hh   = 8, 6
+            head_r   = pygame.Rect(nx2 - hw // 2, int(ny_pos) - hh // 2, hw, hh)
+            hollow   = dur_type in ("half", "whole")
             if hollow:
-                pygame.draw.ellipse(self.screen, col, head_rect, 2)
+                pygame.draw.ellipse(self.screen, col, head_r, 2)
             else:
-                pygame.draw.ellipse(self.screen, col, head_rect)
-
-            # Plica (stem) — hacia arriba si nota baja, hacia abajo si nota alta
+                pygame.draw.ellipse(self.screen, col, head_r)
             if dur_type != "whole":
-                stem_len = LINE_SEP * 3
-                mid_staff = staff_y0 + staff_h / 2
-                if ny_pos >= mid_staff:
-                    # Plica hacia arriba
+                sl = LINE_SEP * 3
+                mid = staff_y0 + staff_h / 2
+                if ny_pos >= mid:
                     pygame.draw.line(self.screen, col,
-                                     (nx2 + head_w // 2 - 1, int(ny_pos)),
-                                     (nx2 + head_w // 2 - 1, int(ny_pos) - stem_len), 1)
-                    # Corchea: banderín
-                    if dur_type in ("eighth", "16th"):
-                        flag_x = nx2 + head_w // 2 - 1
-                        flag_y = int(ny_pos) - stem_len
-                        pygame.draw.arc(self.screen, col,
-                                        pygame.Rect(flag_x, flag_y, 8, 10),
-                                        -0.5, 1.6, 1)
+                                     (nx2 + hw//2-1, int(ny_pos)),
+                                     (nx2 + hw//2-1, int(ny_pos) - sl), 1)
                 else:
-                    # Plica hacia abajo
                     pygame.draw.line(self.screen, col,
-                                     (nx2 - head_w // 2 + 1, int(ny_pos)),
-                                     (nx2 - head_w // 2 + 1, int(ny_pos) + stem_len), 1)
-                    if dur_type in ("eighth", "16th"):
-                        flag_x = nx2 - head_w // 2 + 1
-                        flag_y = int(ny_pos) + stem_len - 10
-                        pygame.draw.arc(self.screen, col,
-                                        pygame.Rect(flag_x - 8, flag_y, 8, 10),
-                                        1.6, 3.7, 1)
-
-            # Alteración (sostenido / bemol)
+                                     (nx2 - hw//2+1, int(ny_pos)),
+                                     (nx2 - hw//2+1, int(ny_pos) + sl), 1)
             if alter != 0 and not is_past:
-                acc_str = "#" if alter > 0 else "b"
-                acc_t   = self.font_tiny.render(acc_str, True, col)
-                self.screen.blit(acc_t, (nx2 - head_w // 2 - acc_t.get_width() - 1,
-                                          int(ny_pos) - acc_t.get_height() // 2))
-
-            # Pulso de la nota actual
+                acc = self.font_tiny.render("#" if alter > 0 else "b", True, col)
+                self.screen.blit(acc, (nx2 - hw//2 - acc.get_width() - 1,
+                                       int(ny_pos) - acc.get_height()//2))
             if is_cur:
                 pulse = 0.5 + 0.5 * math.sin(time.time() * 9)
                 hr    = int(9 + pulse * 3)
-                hs    = pygame.Surface((hr * 2, hr * 2), pygame.SRCALPHA)
+                hs    = pygame.Surface((hr*2, hr*2), pygame.SRCALPHA)
                 pygame.draw.circle(hs, (*col, 40), (hr, hr), hr)
                 self.screen.blit(hs, (nx2 - hr, int(ny_pos) - hr))
 
-        # Borde inferior del área
-        pygame.draw.line(self.screen, C_DGRAY,
-                         (0, SY + SH - 1), (W, SY + SH - 1), 1)
-        # Etiqueta
-        lbl_s = self.font_tiny.render("PARTITURA  (clave de Fa)", True, C_GRAY)
+        lbl_s = self.font_tiny.render("PARTITURA  (clave de Fa — manual)", True, C_GRAY)
         self.screen.blit(lbl_s, (CLEF_W + 4, SY + 2))
 
     # ── Mástil del bajo ─────────────────────────────────────────────────
