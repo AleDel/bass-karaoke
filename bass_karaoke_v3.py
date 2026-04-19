@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BASS KARAOKE v3 — Feet Don't Fail Me Now               ║
 ║         Joy Crookes | Bass: Dayna Fisher                        ║
-║         MusicXML · PyAudio + aubio · varispeed (librosa)        ║
+║         MusicXML · PyAudio + aubio · time stretch (librosa)     ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 INSTALACIÓN:
@@ -49,7 +49,7 @@ except ImportError:
 
 PITCH_AVAILABLE = AUBIO_OK and PA_OK
 
-# ─── Varispeed: librosa + sounddevice ────────────────────────────────────────
+# ─── Time Stretch: librosa + sounddevice ────────────────────────────────────
 try:
     import librosa
     import sounddevice as sd
@@ -126,43 +126,50 @@ def notes_match(detected_hz, expected_hz):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  REPRODUCTOR VARISPEED  (librosa + sounddevice)
+#  REPRODUCTOR CON TIME STRETCH  (librosa + sounddevice)
 # ═══════════════════════════════════════════════════════════════════════════════
 class VarispeedPlayer:
     """
-    Carga el MP3 con librosa y lo reproduce a través de sounddevice
-    con velocidad variable. Cambiar speed TAMBIÉN cambia el pitch
-    (varispeed clásico), que para práctica de bajo es completamente aceptable.
+    Carga el MP3 con librosa y lo reproduce con time stretching (librosa.effects.time_stretch).
+    Cambiar la velocidad NO afecta al tono (pitch-preserving tempo change).
+    El estiramiento se aplica en un hilo de fondo; mientras procesa, la UI
+    muestra "(estirando…)" y continúa reproduciendo la versión anterior.
     """
     def __init__(self):
-        self.data      = None   # shape (frames, 2) float32
-        self.sr        = SAMPLERATE
-        self.pos       = 0.0   # posición flotante en frames
-        self.speed     = 1.0
-        self.volume    = 1.0
-        self._playing  = False
-        self._lock     = threading.Lock()
-        self._stream   = None
-        self._loaded   = False
+        self.data_orig      = None   # audio original (frames, 2) float32
+        self.data           = None   # audio con time-stretch aplicado
+        self.sr             = SAMPLERATE
+        self.pos            = 0.0   # posición en frames dentro de self.data
+        self._applied_ratio = 1.0   # ratio que tiene self.data aplicado
+        self._target_ratio  = 1.0   # último ratio solicitado
+        self.volume         = 1.0
+        self._playing       = False
+        self._lock          = threading.Lock()
+        self._stream        = None
+        self._loaded        = False
+        self.stretching     = False  # True mientras procesa (para la UI)
 
     def load(self, path):
         if not VARSPEED_OK:
             return False
         try:
             y, sr = librosa.load(path, sr=SAMPLERATE, mono=False)
-            # librosa devuelve (channels, frames) o (frames,) para mono
             if y.ndim == 1:
                 y = np.stack([y, y], axis=1)
             else:
                 y = y.T                           # (ch, frames) → (frames, ch)
-            self.data    = y.astype(np.float32)
-            self.sr      = SAMPLERATE
-            self._loaded = True
-            dur          = len(self.data) / SAMPLERATE
-            print(f"[Varispeed] {os.path.basename(path)}  {dur:.1f}s  frames={len(self.data)}")
+            arr = y.astype(np.float32)
+            self.data_orig      = arr
+            self.data           = arr
+            self._applied_ratio = 1.0
+            self._target_ratio  = 1.0
+            self.sr             = SAMPLERATE
+            self._loaded        = True
+            dur = len(arr) / SAMPLERATE
+            print(f"[TimeStretch] {os.path.basename(path)}  {dur:.1f}s  frames={len(arr)}")
             return True
         except Exception as e:
-            print(f"[Varispeed ERROR] {e}")
+            print(f"[TimeStretch ERROR al cargar] {e}")
             return False
 
     def _callback(self, outdata, frames, time_info, status):
@@ -170,9 +177,8 @@ class VarispeedPlayer:
             if not self._playing or self.data is None:
                 outdata[:] = 0
                 return
-            src_frames = frames * self.speed
-            start      = int(self.pos)
-            end        = int(self.pos + src_frames)
+            start = int(self.pos)
+            end   = start + frames
             if start >= len(self.data):
                 outdata[:] = 0
                 self._playing = False
@@ -181,22 +187,23 @@ class VarispeedPlayer:
             chunk = self.data[start:end]
             if len(chunk) == 0:
                 outdata[:] = 0
-            elif len(chunk) == frames:
-                out = chunk
-            else:
-                idx = np.linspace(0, len(chunk) - 1, frames)
+                return
+            if len(chunk) < frames:
+                # cerca del final: rellenar con silencio
                 out = np.zeros((frames, 2), dtype=np.float32)
-                for ch in range(2):
-                    out[:, ch] = np.interp(idx, np.arange(len(chunk)), chunk[:, ch])
+                out[:len(chunk)] = chunk
+            else:
+                out = chunk
             outdata[:] = (out * self.volume).reshape(outdata.shape)
-            self.pos += src_frames
+            self.pos += frames
 
     def play(self, offset_sec=0.0):
         if not self._loaded:
             return
         self.stop()
         with self._lock:
-            self.pos      = max(0.0, offset_sec * self.sr)
+            # offset_sec está en segundos del audio estirado (mismo SR, distinta duración)
+            self.pos      = max(0.0, offset_sec * self.sr / max(self._applied_ratio, 0.01))
             self._playing = True
         self._stream = sd.OutputStream(
             samplerate=self.sr, channels=2,
@@ -232,8 +239,39 @@ class VarispeedPlayer:
             self.pos = 0.0
 
     def set_speed(self, ratio):
-        with self._lock:
-            self.speed = max(0.3, min(2.5, float(ratio)))
+        ratio = max(0.3, min(2.5, float(ratio)))
+        self._target_ratio = ratio
+        if abs(ratio - self._applied_ratio) < 0.005:
+            return  # sin cambio relevante
+        t = threading.Thread(target=self._apply_stretch, args=(ratio,), daemon=True)
+        t.start()
+
+    def _apply_stretch(self, ratio):
+        """Aplica time_stretch en background; preserva el tono."""
+        if self.data_orig is None or self.stretching:
+            return
+        self.stretching = True
+        try:
+            orig = self.data_orig  # (frames, 2)
+            print(f"[TimeStretch] aplicando rate={ratio:.3f}  ({ratio:.0%} tempo)  …")
+            ch0 = librosa.effects.time_stretch(orig[:, 0], rate=ratio)
+            ch1 = librosa.effects.time_stretch(orig[:, 1], rate=ratio)
+            new_data = np.stack([ch0, ch1], axis=1).astype(np.float32)
+            with self._lock:
+                # Re-mapear posición actual al nuevo audio
+                old_ratio = self._applied_ratio
+                new_pos   = self.pos * old_ratio / ratio if ratio > 0 else 0.0
+                self.data           = new_data
+                self._applied_ratio = ratio
+                self.pos            = max(0.0, min(new_pos, len(new_data) - 1))
+            print(f"[TimeStretch] listo  frames={len(new_data)}  dur={len(new_data)/self.sr:.1f}s")
+        except Exception as e:
+            print(f"[TimeStretch ERROR] {e}")
+        finally:
+            self.stretching = False
+            # Si el usuario cambió el ratio otra vez mientras procesábamos, re-aplicar
+            if abs(self._target_ratio - self._applied_ratio) > 0.005:
+                self._apply_stretch(self._target_ratio)
 
     def set_volume(self, v):
         with self._lock:
@@ -1094,7 +1132,8 @@ class BassKaraoke:
         off_col = C_GRAY if self.mp3_offset_sec == 0 else C_BLUE
         speed_str = ""
         if self._vsp and self._vsp.loaded:
-            speed_str = f"  x{self._speed_ratio():.2f}"
+            stretch_lbl = "  (estirando…)" if self._vsp.stretching else ""
+            speed_str = f"  x{self._speed_ratio():.2f}{stretch_lbl}"
         engine_str = f"  [{getattr(self, 'pitch_engine', 'aubio')}]"
         off_t = self.font_tiny.render(
             f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}   [ ,/. fino  Shift+,/. grueso   P=pitch   C=countdown({'ON' if self.countdown_enabled else 'OFF'}) ]",
