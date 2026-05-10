@@ -35,31 +35,37 @@ def draw_note_panel(app) -> None:
         return
 
     fret_big = app.font_huge.render(str(cur["fret"]), True, C_ACCENT)
-    app.screen.blit(fret_big, (px + pw // 2 - fret_big.get_width() // 2, py + 16))
+    app.screen.blit(fret_big, (px + pw // 2 - fret_big.get_width() // 2, py + 12))
 
     scol  = STRING_COLORS[cur["string"]]
     s_lbl = app.font_med.render(
         f"Cuerda {STRING_NAMES[cur['string']]}", True, scol)
-    app.screen.blit(s_lbl, (px + pw // 2 - s_lbl.get_width() // 2, py + 102))
+    app.screen.blit(s_lbl, (px + pw // 2 - s_lbl.get_width() // 2, py + 90))
 
     n_lbl = app.font_small.render(cur["note_name"], True, C_BLUE)
-    app.screen.blit(n_lbl, (px + pw // 2 - n_lbl.get_width() // 2, py + 128))
+    app.screen.blit(n_lbl, (px + pw // 2 - n_lbl.get_width() // 2, py + 112))
 
     sec = app.font_tiny.render(cur["section"], True, C_GRAY)
-    app.screen.blit(sec, (px + pw // 2 - sec.get_width() // 2, py + 152))
+    app.screen.blit(sec, (px + pw // 2 - sec.get_width() // 2, py + 130))
 
 
 def draw_metronome(app) -> None:
     mx, my, bw = 220, LOWER_Y + 4, 42
-    lbl = app.font_tiny.render("METRO", True, C_GRAY)
+    metro_on = getattr(app, 'metro_sound', True)
+    lbl_col  = C_GRAY if metro_on else (60, 60, 80)
+    lbl_str  = "METRO" if metro_on else "METRO(off)"
+    lbl = app.font_tiny.render(lbl_str, True, lbl_col)
     app.screen.blit(lbl, (mx, my - 13))
     for b in range(4):
         bx     = mx + b * (bw + 4)
         active = (app.playing or app.counting_down) and (b == app.metro_beat)
         c = C_ACCENT if (active and b == 0) else C_WHITE if active else C_DGRAY
+        if not metro_on:
+            c = (30, 30, 45) if not active else (50, 50, 70)
         pygame.draw.rect(app.screen, c, (bx, my, bw, 28), border_radius=5)
         if b == 0:
-            pygame.draw.rect(app.screen, C_ACCENT, (bx, my, bw, 28), 2, border_radius=5)
+            border_col = C_ACCENT if metro_on else (60, 60, 80)
+            pygame.draw.rect(app.screen, border_col, (bx, my, bw, 28), 2, border_radius=5)
         n = app.font_med.render(str(b + 1), True, (10, 10, 18) if active else C_GRAY)
         app.screen.blit(n, (bx + bw // 2 - n.get_width() // 2, my + 4))
 
@@ -67,7 +73,7 @@ def draw_metronome(app) -> None:
 def draw_pitch_panel(app) -> None:
     from ..audio import PITCH_AVAILABLE
 
-    px, py, pw, ph = 220, LOWER_Y + 38, 634, 154
+    px, py, pw, ph = 220, LOWER_Y + 36, 634, 110
     pygame.draw.rect(app.screen, C_PANEL, (px, py, pw, ph), border_radius=10)
 
     with app.pitch_lock:
@@ -84,32 +90,32 @@ def draw_pitch_panel(app) -> None:
             True, C_GRAY)
     else:
         t = app.font_tiny.render("pip install pyaudio aubio", True, C_RED)
-    app.screen.blit(t, (px + 10, py + 8))
+    app.screen.blit(t, (px + 10, py + 6))
 
     col = (C_OK  if app.note_match is True  else
            C_ERR if app.note_match is False else C_GRAY)
     big = app.font_big.render(stb_note, True, col)
-    app.screen.blit(big, (px + 10, py + 24))
+    app.screen.blit(big, (px + 10, py + 20))
     if det_hz > 0 and det_note != stb_note:
         raw_t = app.font_tiny.render(f"crudo: {det_note}", True, C_DGRAY)
-        app.screen.blit(raw_t, (px + 10, py + 62))
+        app.screen.blit(raw_t, (px + 10, py + 52))
 
     if stb_hz > 0:
         hz_t = app.font_small.render(f"{stb_hz:.1f} Hz", True, C_GRAY)
-        app.screen.blit(hz_t, (px + 10, py + 72))
+        app.screen.blit(hz_t, (px + 10, py + 62))
 
     if cur:
         exp = app.font_small.render(
             f"Esperada: {cur['note_name']}  (tr.{cur['fret']} Cuerda {STRING_NAMES[cur['string']]})",
             True, C_WHITE)
-        app.screen.blit(exp, (px + 10, py + 116))
+        app.screen.blit(exp, (px + 10, py + 90))
 
     if app.note_match is True:
         app.screen.blit(app.font_big.render("OK!", True, C_OK),
-                        (px + 160, py + 28))
+                        (px + 160, py + 24))
     elif app.note_match is False:
         app.screen.blit(app.font_big.render("Ajusta", True, C_ERR),
-                        (px + 160, py + 28))
+                        (px + 160, py + 24))
 
     if PITCH_AVAILABLE and cur and stb_hz > 0 and cur["hz"] > 0:
         ratio = stb_hz / cur["hz"]
@@ -118,7 +124,7 @@ def draw_pitch_panel(app) -> None:
             while cents >  600: cents -= 1200
             while cents < -600: cents += 1200
             cents_c = max(-120, min(120, cents))
-            bx, by2, bw2, bh = px + 160, py + 75, 450, 13
+            bx, by2, bw2, bh = px + 160, py + 68, 450, 13
             pygame.draw.rect(app.screen, C_DGRAY, (bx, by2, bw2, bh), border_radius=3)
             cx = bx + bw2 // 2
             mk = cx + int(cents_c / 120 * (bw2 // 2))
@@ -174,7 +180,8 @@ def draw_bottom_bar(app) -> None:
     hints = [
         ("SPC", "Play"), ("R", "Reinicio"), ("Up/Dn", "Tempo"),
         (",.", "offset±0.05"), ("S+,.", "offset±0.5"),
-        ("D", "Disp"), ("T", "Tuner"), ("M", "Mute"),
+        ("D", "Disp"), ("T", "Tuner"), ("M", "Mute"), ("N", "Metro"),
+        ("H", "Mapa"), ("S", "Partitura"),
         ("F5", "Guardar"), ("F6", "Cargar"), ("ESC", "Salir"),
     ]
     x = 8

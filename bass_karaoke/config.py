@@ -8,6 +8,7 @@ from pathlib import Path
 _BASE_DIR = Path(__file__).parent.parent   # carpeta Ensayos/
 
 MUSICXML_PATH = str(_BASE_DIR / "cancion" / "mitab.musicxml")
+TG_PATH       = str(_BASE_DIR / "cancion" / "mitab.tg")
 CONFIG_PATH   = str(_BASE_DIR / "bass_karaoke_config.json")
 
 # ─── Audio ────────────────────────────────────────────────────────────────────
@@ -55,16 +56,18 @@ NECK_DOT_FRETS  = {3, 5, 7, 9, 15}
 NECK_OCT_FRETS  = {12}
 
 # ─── UI: dimensiones principales ─────────────────────────────────────────────
-W, H = 1280, 900
+W, H = 1280, 860
 FPS  = 60
 
 HEADER_H  = 55
 TAB_Y     = HEADER_H + 3
 TAB_H     = 252
-SCORE_H   = 180   # altura de la sub-zona de partitura dentro de TAB
-TAB_TOTAL = TAB_H + SCORE_H + 8
+SCORE_H   = 140   # altura de la sub-zona de partitura dentro de TAB
+GUITARTAB_H = 60  # tablatura estilo TuxGuitar debajo de la partitura
+GUITARTAB_Y = TAB_Y + TAB_H + 8 + SCORE_H + 2   # = 460
+TAB_TOTAL = TAB_H + SCORE_H + GUITARTAB_H + 8    # = 460
 
-NECK_Y    = TAB_Y + TAB_TOTAL + 16
+NECK_Y    = TAB_Y + TAB_TOTAL + 16   # = 534
 NECK_H    = 108
 NECK_W    = 726
 
@@ -78,8 +81,8 @@ PIANO_Y   = NECK_Y
 PIANO_H   = NECK_H
 PIANO_W   = W - PIANO_X - 2
 
-LOWER_Y   = NECK_Y + NECK_H + 16
-LOWER_H   = 196
+LOWER_Y   = NECK_Y + NECK_H + 14   # = 656
+LOWER_H   = 148                     # ajustado a H=860 (BOTTOM_Y=808)
 
 BOTTOM_Y  = H - 52
 

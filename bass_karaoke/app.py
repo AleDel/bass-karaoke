@@ -17,20 +17,20 @@ from .config import (
     NECK_FRETS, NECK_DOT_FRETS, NECK_OCT_FRETS,
     NECK_AREA_X, NECK_AREA_W, NECK_NUT_X, NECK_LABEL_W,
     STRING_NAMES, STRING_COLORS, STRING_THICK,
-    BPM_DEFAULT, BPM_ORIGINAL, PITCH_METHODS, MUSICXML_PATH, CONFIG_PATH,
+    BPM_DEFAULT, BPM_ORIGINAL, PITCH_METHODS, MUSICXML_PATH, TG_PATH, CONFIG_PATH,
     C_BG, C_BG2, C_PANEL, C_DGRAY, C_ACCENT, C_GREEN, C_RED,
     C_BLUE, C_WHITE, C_GRAY, C_OK, C_ERR, C_WAIT,
     MIN_HZ, MAX_HZ,
 )
 from .utils import fret_to_hz, hz_to_note_name, notes_match
-from .parser import parse_musicxml
+from .parser import parse_musicxml, parse_grace_notes
 from .audio import VarispeedPlayer, VARSPEED_OK, PitchEngine, PITCH_AVAILABLE, enumerate_devices
 from .score import (
     init_score_surface, VEROVIO_OK, CAIROSVG_OK,
     init_score_surface_music21, MUSIC21_OK,
 )
 from .ui import (
-    draw_tab, draw_score, draw_neck, draw_piano,
+    draw_tab, draw_score, draw_guitartab, draw_neck, draw_piano,
     draw_note_panel, draw_metronome, draw_pitch_panel,
     draw_stats_panel, draw_bottom_bar,
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
@@ -105,8 +105,13 @@ class BassKaraoke:
         self.pitch_menu_sel  = PITCH_METHODS.index("crepe-tiny")
 
         # ── Metrónomo ──────────────────────────────────────────────────
-        self.metro_beat  = 0
-        self.metro_flash = 0.0
+        self.metro_beat    = 0
+        self.metro_flash   = 0.0
+        self.metro_sound   = False  # desactivado por defecto; N para activar
+        self._click_hi, self._click_lo = self._build_clicks()
+
+        # ── Mástil: mapa de notas de la canción ───────────────────────
+        self.neck_map = False  # H para mostrar/ocultar
 
         # ── Scroll ─────────────────────────────────────────────────────
         self.px_per_16th = 30
@@ -114,8 +119,9 @@ class BassKaraoke:
         self.target_x    = 0.0
 
         # ── MusicXML ───────────────────────────────────────────────────
-        self.notes    = []
-        self.sections = []
+        self.notes       = []
+        self.sections    = []
+        self.grace_notes = []
         self._load_notes()
 
         # ── Score pre-render ───────────────────────────────────────────
@@ -124,6 +130,7 @@ class BassKaraoke:
         self._score_surf     = None
         self._score_note_xs  = []
         self._score_scroll_x = 0.0
+        self._score_cache    = {}   # {renderer: (surf, note_xs)} para no re-renderizar
         self._score_total16  = (
             (self.notes[-1]["start16"] + self.notes[-1]["dur"]) if self.notes else 1
         )
@@ -160,6 +167,41 @@ class BassKaraoke:
 
         if PITCH_AVAILABLE and self.audio_devices:
             self._start_audio()
+
+    # ══════════════════════════════════════════════════════════════════
+    #  METRÓNOMO — generación de clicks con numpy
+    # ══════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _build_clicks():
+        """Genera dos clicks (beat 1 agudo, beats 2-4 grave) como pygame.Sound."""
+        import numpy as np
+        SR   = 44100
+        dur  = 0.06          # 60 ms
+        n    = int(SR * dur)
+        t    = np.linspace(0, dur, n, endpoint=False)
+        env  = np.exp(-t * 60)   # envolvente de decaimiento rápido
+
+        # Beat 1: tono más agudo (1000 Hz)
+        wave_hi = (np.sin(2 * np.pi * 1000 * t) * env * 28000).astype(np.int16)
+        stereo_hi = np.column_stack([wave_hi, wave_hi])
+        snd_hi  = pygame.sndarray.make_sound(np.ascontiguousarray(stereo_hi))
+
+        # Beats 2-4: tono más grave (600 Hz)
+        wave_lo = (np.sin(2 * np.pi * 600 * t) * env * 20000).astype(np.int16)
+        stereo_lo = np.column_stack([wave_lo, wave_lo])
+        snd_lo  = pygame.sndarray.make_sound(np.ascontiguousarray(stereo_lo))
+
+        return snd_hi, snd_lo
+
+    def _play_click(self, is_beat1: bool, force: bool = False):
+        """force=True lo hace sonar aunque metro_sound esté desactivado (countdown)."""
+        if not (self.metro_sound or force):
+            return
+        try:
+            snd = self._click_hi if is_beat1 else self._click_lo
+            snd.play()
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════════════════════════
     #  CONFIG
@@ -221,14 +263,15 @@ class BassKaraoke:
             return
         try:
             notes, sections, bpm = parse_musicxml(MUSICXML_PATH)
-            self.notes    = notes
-            self.sections = sections
-            self.bpm      = bpm
+            self.notes       = notes
+            self.sections    = sections
+            self.bpm         = bpm
+            self.grace_notes = parse_grace_notes(TG_PATH, notes)
             for n in notes:
                 sec = n["section"]
                 if sec not in self.section_stats:
                     self.section_stats[sec] = {"ok": 0, "total": 0}
-            print(f"[OK] MusicXML: {len(notes)} notas, {bpm} BPM")
+            print(f"[OK] MusicXML: {len(notes)} notas, {bpm} BPM  graces={len(self.grace_notes)}")
         except Exception as e:
             print(f"[ERROR] MusicXML: {e}")
             import traceback; traceback.print_exc()
@@ -246,14 +289,26 @@ class BassKaraoke:
     #  SCORE INIT
     # ══════════════════════════════════════════════════════════════════
     def _init_score_verovio(self):
+        if "verovio" in self._score_cache:
+            self._score_surf, self._score_note_xs = self._score_cache["verovio"]
+            print("[Verovio] usando caché")
+            return
         surf, note_xs = init_score_surface(self.notes)
         self._score_surf    = surf
         self._score_note_xs = note_xs
+        if surf is not None:
+            self._score_cache["verovio"] = (surf, note_xs)
 
     def _init_score_music21(self):
+        if "music21" in self._score_cache:
+            self._score_surf, self._score_note_xs = self._score_cache["music21"]
+            print("[Music21] usando caché")
+            return
         surf, note_xs = init_score_surface_music21(self.notes)
         self._score_surf    = surf
         self._score_note_xs = note_xs
+        if surf is not None:
+            self._score_cache["music21"] = (surf, note_xs)
 
     # ══════════════════════════════════════════════════════════════════
     #  AUDIO / PITCH
@@ -319,6 +374,67 @@ class BassKaraoke:
     # ══════════════════════════════════════════════════════════════════
     #  CONTROLES
     # ══════════════════════════════════════════════════════════════════
+    def _measure_starts(self):
+        """Devuelve lista ordenada de posiciones start16 del inicio de cada compás."""
+        seen = {}
+        for note in self.notes:
+            m = note["measure_num"]
+            if m not in seen:
+                seen[m] = note["start16"]
+        return sorted(seen.values())
+
+    def _snap_measure(self, direction: int):
+        """
+        Salta al inicio del compás anterior (direction=-1) o siguiente (+1).
+        Si ya estamos al inicio del compás actual, retrocede al compás anterior.
+        """
+        starts = self._measure_starts()
+        if not starts:
+            return
+        cur = self.beat_time
+        TOL = 0.5  # tolerancia en 16avos para considerar "ya en el inicio"
+
+        if direction > 0:
+            target = None
+            for s in starts:
+                if s > cur + TOL:
+                    target = s
+                    break
+            if target is None:
+                target = starts[-1]
+        else:
+            target = starts[0]
+            for s in starts:
+                if s < cur - TOL:
+                    target = s
+        self._seek_to_beat(target)
+
+    def _seek_to_beat(self, beat16: float):
+        """Salta la reproducción a una posición concreta (en 16avos)."""
+        beat16 = max(0.0, float(beat16))
+        self.beat_time  = beat16
+        self.viewport_x = max(0.0, float(self.px_of(beat16)))
+        self.target_x   = self.viewport_x
+
+        # Hacer que la partitura salte sin animación
+        self._score_scroll_x = self.viewport_x * (
+            (self._score_surf.get_width() if self._score_surf else 1)
+            / max(1, self._score_total16 * self.px_per_16th)
+        )
+
+        # Actualizar note_idx: primer nota que no haya pasado aún
+        self.note_idx = len(self.notes)
+        for i, note in enumerate(self.notes):
+            if note["start16"] + note["dur"] > beat16:
+                self.note_idx = i
+                break
+
+        # Seek del audio si está reproduciendo
+        if self.playing:
+            offset = (beat16 / 4.0) * (60.0 / self.bpm) + self.mp3_offset_sec
+            self._stop_mp3()
+            self._play_mp3(offset)
+
     def toggle_play(self):
         if self.counting_down:
             self.counting_down = False
@@ -432,6 +548,7 @@ class BassKaraoke:
                 self.countdown_timer -= beat_sec
                 self.metro_flash = 1.0
                 self.metro_beat  = (4 - self.countdown_beat) % 4
+                self._play_click(self.metro_beat == 0, force=True)  # siempre suena
                 self.countdown_beat -= 1
                 if self.countdown_beat <= 0:
                     self.counting_down = False
@@ -449,6 +566,7 @@ class BassKaraoke:
         if cur_q > prev_q:
             self.metro_beat  = cur_q % 4
             self.metro_flash = 1.0
+            self._play_click(self.metro_beat == 0)
         self.metro_flash = max(0.0, self.metro_flash - dt * 5)
 
         if self.beat_time < 0:
@@ -502,6 +620,7 @@ class BassKaraoke:
         self._draw_header()
         draw_tab(self)
         draw_score(self)
+        draw_guitartab(self)
         draw_neck(self)
         draw_piano(self)
         draw_note_panel(self)
@@ -615,6 +734,10 @@ class BassKaraoke:
                 self.ajustar_offset(-0.5 if shift else -0.05)
             elif event.key == pygame.K_PERIOD:
                 self.ajustar_offset(+0.5 if shift else +0.05)
+            elif event.key == pygame.K_LEFT:
+                self._snap_measure(-1)
+            elif event.key == pygame.K_RIGHT:
+                self._snap_measure(+1)
             elif event.key == pygame.K_m:
                 self.toggle_mute()
             elif event.key == pygame.K_d:
@@ -629,6 +752,10 @@ class BassKaraoke:
                 self.cycle_score_renderer()
             elif event.key == pygame.K_c:
                 self.countdown_enabled = not self.countdown_enabled
+            elif event.key == pygame.K_n:
+                self.metro_sound = not self.metro_sound
+            elif event.key == pygame.K_h:
+                self.neck_map = not self.neck_map
             elif event.key == pygame.K_F5:
                 self._save_config()
             elif event.key == pygame.K_F6:

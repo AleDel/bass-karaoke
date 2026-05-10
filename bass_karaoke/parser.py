@@ -112,3 +112,79 @@ def parse_musicxml(filepath: str):
             note["section"] = sections[sec_idx][0]
 
     return notes, sections, bpm
+
+
+def parse_grace_notes(tg_path: str, notes: list) -> list:
+    """
+    Lee las notas de gracia del archivo .tg de TuxGuitar (formato ZIP+XML).
+
+    Devuelve lista de dicts con:
+      fret, string, transition, main_note_idx, main_start16
+    """
+    import zipfile, os
+    if not os.path.exists(tg_path):
+        return []
+    try:
+        with zipfile.ZipFile(tg_path) as z:
+            if 'content.xml' not in z.namelist():
+                return []
+            data = z.read('content.xml')
+        tg_root = ET.fromstring(data)
+    except Exception:
+        return []
+
+    # Recopilar beats del track con notas (excluyendo silencios y voices vacías)
+    beat_records = []  # list of {'has_grace', 'grace_fret', 'main_fret', 'main_string', 'transition'}
+    track = next(iter(tg_root.iter('TGTrack')), None)
+    if track is None:
+        return []
+
+    for measure in track.iter('TGMeasure'):
+        for beat in measure.findall('TGBeat'):
+            note_el = None
+            for voice in beat.findall('voice'):
+                if voice.get('empty') == 'true':
+                    continue
+                note_el = voice.find('note')
+                if note_el is not None:
+                    break
+            if note_el is None:
+                continue
+            grace_el = note_el.find('grace')
+            main_fret   = int(note_el.get('value', '0'))
+            main_string = int(note_el.get('string', '1'))
+            if grace_el is not None:
+                beat_records.append({
+                    'has_grace':  True,
+                    'grace_fret': int(grace_el.get('fret', '0')),
+                    'transition': grace_el.get('transition', 'none'),
+                    'main_fret':  main_fret,
+                    'main_string': main_string,
+                })
+            else:
+                beat_records.append({
+                    'has_grace':   False,
+                    'main_fret':   main_fret,
+                    'main_string': main_string,
+                })
+
+    # Mapeo por índice: cada beat_record (con o sin grace) corresponde a
+    # una nota en app.notes en el mismo orden
+    grace_notes = []
+    notes_idx = 0
+    for rec in beat_records:
+        if notes_idx >= len(notes):
+            break
+        if rec['has_grace']:
+            main_note = notes[notes_idx]
+            grace_notes.append({
+                'fret':          rec['grace_fret'],
+                'string':        rec['main_string'],
+                'transition':    rec['transition'],
+                'main_note_idx': notes_idx,
+                'main_start16':  main_note['start16'],
+                'is_grace':      True,
+            })
+        notes_idx += 1
+
+    return grace_notes

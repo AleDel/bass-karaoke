@@ -100,7 +100,7 @@ def draw_tab(app) -> None:
 
     R_CUR  = 14
     R_NORM = 11
-    R_PAST = 8
+    R_PAST = 11   # mismo tamaño que futuras, solo cambia el color
 
     for i, note in enumerate(app.notes):
         nx = app.px_of(note["start16"]) - vx + CURSOR_X
@@ -120,7 +120,7 @@ def draw_tab(app) -> None:
             pygame.draw.circle(hs, (*col, 45), (hr, hr), hr)
             app.screen.blit(hs, (nx - hr, ny - hr))
         elif is_past:
-            col = (38, 38, 60)
+            col = (75, 75, 95)   # gris para notas pasadas
             r   = R_PAST
         else:
             col = STRING_COLORS[note["string"]]
@@ -136,13 +136,11 @@ def draw_tab(app) -> None:
                 app.screen.blit(s, (nx, ny - 1))
 
         pygame.draw.circle(app.screen, col, (nx, ny), r)
-        if not is_past:
-            pygame.draw.circle(app.screen, (10, 10, 18), (nx, ny), r - 3)
+        pygame.draw.circle(app.screen, (10, 10, 18), (nx, ny), r - 3)
 
-        f   = (app.font_med   if is_cur  else
-               app.font_small if not is_past else app.font_tiny)
-        txt = f.render(str(note["fret"]), True,
-                       col if is_past else C_WHITE)
+        f       = app.font_med if is_cur else app.font_small
+        txt_col = (195, 195, 215) if is_past else C_WHITE
+        txt = f.render(str(note["fret"]), True, txt_col)
         app.screen.blit(txt, (nx - txt.get_width() // 2,
                                ny - txt.get_height() // 2))
 

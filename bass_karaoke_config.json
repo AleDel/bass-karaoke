@@ -1,8 +1,9 @@
 {
   "bpm": 113.0,
-  "mp3_offset_sec": 0.25,
+  "mp3_offset_sec": 0.39999999999999997,
   "device_idx": 3,
   "muted": false,
   "pitch_method": "pesto",
-  "countdown_enabled": false
+  "countdown_enabled": false,
+  "score_renderer": "verovio"
 }

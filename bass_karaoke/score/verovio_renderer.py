@@ -71,6 +71,30 @@ def strip_tab_staff(xml_str: str) -> str:
             for idx in sorted(remove_set, reverse=True):
                 measure.remove(children[idx])
 
+    # Eliminar glissandos (generan warnings de Verovio al no poder cerrarse)
+    for part in root.iter('part'):
+        # ── Arreglar glissandos huérfanos (bug de TuxGuitar: start sin stop) ──
+        from collections import defaultdict as _dd
+        gliss_has = _dd(lambda: {'start': False, 'stop': False})
+        for note in part.iter('note'):
+            for notations in note.findall('notations'):
+                for gl in notations.findall('glissando'):
+                    num = gl.get('number', '1')
+                    typ = gl.get('type', '')
+                    if typ in ('start', 'stop'):
+                        gliss_has[num][typ] = True
+        orphaned = {num for num, d in gliss_has.items()
+                    if not (d['start'] and d['stop'])}
+        if orphaned:
+            for note in part.iter('note'):
+                for notations in note.findall('notations'):
+                    for gl in list(notations.findall('glissando')):
+                        if gl.get('number', '1') in orphaned:
+                            notations.remove(gl)
+                    for sl in list(notations.findall('slide')):
+                        if sl.get('number', '1') in orphaned:
+                            notations.remove(sl)
+
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding='unicode')
 
 
@@ -108,7 +132,16 @@ def init_score_surface(notes: list):
         vrv.loadData(clean_xml)
         svg_str = vrv.renderToSVG(1)
 
-        # Extraer posición X de cada nota desde el SVG
+        # ── Obtener tiempos exactos por ID usando el timemap de Verovio ──────
+        timemap = vrv.renderToTimemap()
+        id_to_qstamp = {}
+        for entry in timemap:
+            if isinstance(entry, dict) and "on" in entry:
+                qs = entry.get("qstamp", 0)
+                for nid in entry["on"]:
+                    id_to_qstamp[nid] = qs
+
+        # ── Extraer posición X en el viewBox por ID de cada nota en el SVG ───
         root_svg = ET.fromstring(svg_str)
 
         def _find_inner_svg(el):
@@ -126,53 +159,53 @@ def init_score_surface(notes: list):
         vb_parts = [float(v) for v in vb.split()]
         vb_w = vb_parts[2]
 
-        def get_tx(el):
-            m = re.search(r"translate\(\s*([-\d.eE+]+)", el.get("transform", ""))
-            return float(m.group(1)) if m else 0.0
+        note_x_by_id = {}   # {svg_id → pos_x en coordenadas viewBox}
 
-        note_xs_staff1, note_xs_all = [], []
-
-        def walk(el, cx, staff_num=None):
+        def _collect_note_pos(el, cx=0.0):
             tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
             if tag == "defs":
                 return
-            cx2     = cx + get_tx(el)
-            cls     = (el.get("class") or "").split()
-            el_id   = el.get("id", "")
-            cur_stf = staff_num
-            if "staff" in cls:
-                m = re.search(r"-(\d+)$", el_id)
-                if m:
-                    cur_stf = int(m.group(1))
+            tx_m = re.search(r"translate\(\s*([-\d.eE+]+)", el.get("transform", ""))
+            cx2 = cx + (float(tx_m.group(1)) if tx_m else 0.0)
+            cls = (el.get("class") or "").split()
             if "note" in cls:
-                note_x = cx2
-                for child in el:
-                    if "notehead" in (child.get("class") or "").split():
-                        for gc in child:
-                            tx = re.search(r"translate\(\s*([-\d.eE+]+)",
-                                           gc.get("transform", ""))
-                            if tx:
-                                note_x = cx + float(tx.group(1))
+                el_id = el.get("id", "")
+                note_x = cx2  # posición del contenedor de nota
+                # La posición real está en el translate del <use> dentro del notehead
+                for ch in el:
+                    if "notehead" in (ch.get("class") or "").split():
+                        for gc in ch:
+                            gc_tx = gc.get("transform", "")
+                            gc_m = re.search(r"translate\(\s*([-\d.eE+]+)", gc_tx)
+                            if gc_m:
+                                note_x = cx + float(gc_m.group(1))
                                 break
                         break
-                note_xs_all.append(note_x)
-                if cur_stf == 1:
-                    note_xs_staff1.append(note_x)
+                if el_id:
+                    note_x_by_id[el_id] = note_x
                 return
             for ch in el:
-                walk(ch, cx2, cur_stf)
+                _collect_note_pos(ch, cx2)
 
-        walk(root_svg, 0.0)
+        _collect_note_pos(root_svg)
 
-        note_xs_svg = (note_xs_staff1
-                       if len(note_xs_staff1) == len(notes)
-                       else note_xs_all)
-
-        # Renderizar SVG → PNG (eliminar <text> para evitar problemas de fuentes)
-        svg_str = re.sub(r'<text\b[^>]*>.*?</text>', '', svg_str, flags=re.DOTALL)
+        # Renderizar SVG → PNG
+        # Eliminar <text> (problemas de fuentes en cairosvg)
+        svg_clean = re.sub(r'<text\b[^>]*>.*?</text>', '', svg_str, flags=re.DOTALL)
+        # Eliminar <rect> sin relleno (contornos de rehearsal marks / direction boxes
+        # que Verovio dibuja como rect vacío y que aparecen como rectángulos blancos)
+        def _remove_empty_rects(m):
+            tag = m.group(0)
+            # Si tiene fill explícito distinto de none → conservar
+            fill_m = re.search(r'\bfill=["\']([^"\']+)["\']', tag)
+            if fill_m and fill_m.group(1).lower() not in ('none', ''):
+                return tag
+            # Sin fill o fill=none → eliminar
+            return ''
+        svg_clean = re.sub(r'<rect\b[^/]*/>', _remove_empty_rects, svg_clean)
         target_h  = SCORE_H - 4
         png_bytes = cairosvg.svg2png(
-            bytestring=svg_str.encode(),
+            bytestring=svg_clean.encode(),
             output_height=target_h,
         )
         surf = pygame.image.load(BytesIO(png_bytes)).convert_alpha()
@@ -187,13 +220,46 @@ def init_score_surface(notes: list):
         alpha[ink] = 220
         del arr, alpha
 
-        n = min(len(notes), len(note_xs_svg))
-        note_xs = [
-            (notes[i]["start16"], note_xs_svg[i] * scale_x)
-            for i in range(n)
-        ]
+        # ── Mapear notas por start16 usando el timemap (robusto ante notas extra) ──
+        # Construir {start16 → pos_x_imagen} desde el timemap + posiciones SVG
+        start16_to_x = {}
+        for nid, qs in id_to_qstamp.items():
+            s16 = round(qs * 4)
+            if nid in note_x_by_id and s16 not in start16_to_x:
+                start16_to_x[s16] = note_x_by_id[nid] * scale_x
+
+        # Para cada nota de app.notes, buscar su posición por start16
+        note_xs = []
+        missing = []
+        for note in notes:
+            s16 = note["start16"]
+            if s16 in start16_to_x:
+                note_xs.append((s16, start16_to_x[s16]))
+            else:
+                missing.append(s16)
+
+        # Fallback: interpolar posiciones para notas sin mapeo directo
+        if missing and note_xs:
+            xs_sorted = sorted(note_xs, key=lambda t: t[0])
+            for s16 in missing:
+                # Interpolación lineal entre los vecinos conocidos
+                if s16 <= xs_sorted[0][0]:
+                    note_xs.append((s16, xs_sorted[0][1]))
+                elif s16 >= xs_sorted[-1][0]:
+                    note_xs.append((s16, xs_sorted[-1][1]))
+                else:
+                    for k in range(len(xs_sorted) - 1):
+                        b0, x0 = xs_sorted[k]; b1, x1 = xs_sorted[k + 1]
+                        if b0 <= s16 <= b1:
+                            t = (s16 - b0) / (b1 - b0) if b1 > b0 else 0.0
+                            note_xs.append((s16, x0 + t * (x1 - x0)))
+                            break
+        note_xs.sort(key=lambda t: t[0])
+
+        mapped = len([n for n in notes if n["start16"] in start16_to_x])
         print(f"[Verovio] {surf.get_width()}×{surf.get_height()}px  "
-              f"notas mapeadas={n}/{len(notes)}")
+              f"notas mapeadas={mapped}/{len(notes)}  "
+              f"timemap={len(id_to_qstamp)}  svg_notas={len(note_x_by_id)}")
         return surf, note_xs
 
     except Exception as _e:

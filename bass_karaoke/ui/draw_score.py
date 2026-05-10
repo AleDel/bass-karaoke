@@ -42,13 +42,43 @@ def draw_score(app) -> None:
         app._score_scroll_x += (target_x - app._score_scroll_x) * 0.15
         blit_x = CURSOR_X - int(app._score_scroll_x)
 
+        NAME_H = 14   # altura de la tira de nombres de nota
         clip = pygame.Rect(0, SY, W, SCORE_H)
         app.screen.set_clip(clip)
-        app.screen.blit(app._score_surf, (blit_x, SY + 2))
+        app.screen.blit(app._score_surf, (blit_x, SY + NAME_H + 1))
         app.screen.set_clip(None)
 
+        # ── tira de nombres de nota ──────────────────────────────────────────
+        pygame.draw.rect(app.screen, (8, 8, 18), (0, SY, W, NAME_H))
+        last_nx   = -999
+        MIN_GAP   = 26          # px mínimos entre etiquetas
+        LABEL_X0  = 90          # dejar espacio para la etiqueta "PARTITURA"
+        for note in app.notes:
+            img_x  = beat_to_img_x(note["start16"])
+            nx     = blit_x + int(img_x)
+            if nx < LABEL_X0 or nx > W:
+                continue
+            if nx - last_nx < MIN_GAP:
+                continue
+            last_nx = nx
+            # color según si es nota pasada, actual o futura
+            is_past = note["start16"] < app.beat_time - 1
+            is_cur  = abs(note["start16"] - app.beat_time) <= 2
+            if is_cur:
+                col = C_ACCENT
+            elif is_past:
+                col = (90, 90, 110)
+            else:
+                col = (170, 170, 190)
+            name = note.get("note_name", "?")
+            surf_n = app.font_tiny.render(name, True, col)
+            tx = nx - surf_n.get_width() // 2
+            tx = max(LABEL_X0, min(tx, W - surf_n.get_width() - 2))
+            app.screen.blit(surf_n, (tx, SY + 1))
+        # ────────────────────────────────────────────────────────────────────
+
         pygame.draw.line(app.screen, C_ACCENT,
-                         (CURSOR_X, SY + 2), (CURSOR_X, SY + SCORE_H - 6), 2)
+                         (CURSOR_X, SY + NAME_H + 1), (CURSOR_X, SY + SCORE_H - 6), 2)
         pygame.draw.polygon(app.screen, C_ACCENT, [
             (CURSOR_X - 5, SY + SCORE_H - 6),
             (CURSOR_X + 5, SY + SCORE_H - 6),
@@ -56,7 +86,7 @@ def draw_score(app) -> None:
 
         lbl = app.font_tiny.render(
             f"PARTITURA  ({app.score_renderer.capitalize()})", True, C_GRAY)
-        app.screen.blit(lbl, (4, SY + 2))
+        app.screen.blit(lbl, (4, SY + 1))
 
     else:
         _draw_score_manual(app, SY, CURSOR_X)

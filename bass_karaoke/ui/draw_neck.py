@@ -116,3 +116,50 @@ def draw_neck(app) -> None:
     pygame.draw.rect(app.screen, C_DGRAY, (nx0, ny, nw, nh), 1)
     lbl_n = app.font_tiny.render("MASTIL DEL BAJO  (trastes 0–15)", True, C_GRAY)
     app.screen.blit(lbl_n, (nx0 + 4, ny - 13))
+
+    # ── Mapa de notas de la canción (H para activar) ──────────────────────────
+    if getattr(app, 'neck_map', False) and app.notes:
+        # Calcular qué (fret, string) aparecen en la canción y cuántas veces
+        from collections import Counter
+        freq = Counter((n['fret'], n['string']) for n in app.notes)
+        max_freq = max(freq.values()) if freq else 1
+
+        # Overlay semitransparente
+        ov = pygame.Surface((nw, nh), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 140))
+        app.screen.blit(ov, (nx0, ny))
+
+        # Redibujar las líneas de cuerdas encima del overlay
+        for s in range(1, 5):
+            y   = int(STR_Y[s])
+            col = STRING_COLORS[s]
+            tick = STRING_THICK[s]
+            pygame.draw.line(app.screen, col,
+                             (NECK_NUT_X + 5, y), (nx0 + nw - 6, y), tick)
+            pygame.draw.line(app.screen, col,
+                             (nx0 + NECK_LABEL_W, y), (NECK_NUT_X, y), tick)
+
+        # Dibujar círculos para cada (fret, string) usado
+        for (fret, string), cnt in freq.items():
+            xc = int(note_x(fret))
+            yc = int(STR_Y[string])
+            if xc > nx0 + nw - 4:
+                continue
+            # Radio proporcional a la frecuencia (mín 7, máx 13)
+            r = int(7 + 6 * (cnt / max_freq))
+            col = STRING_COLORS[string]
+            # Fondo opaco para que sea visible
+            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), r)
+            pygame.draw.circle(app.screen, col, (xc, yc), r, 2)
+            # Número de traste
+            lbl = app.font_tiny.render(str(fret), True, col)
+            app.screen.blit(lbl, (xc - lbl.get_width() // 2,
+                                   yc - lbl.get_height() // 2))
+
+        # Etiqueta
+        lbl_m = app.font_tiny.render("MAPA CANCIÓN  (H=ocultar)", True, C_GRAY)
+        app.screen.blit(lbl_m, (nx0 + 4, ny - 13))
+    else:
+        # Etiqueta normal con sugerencia
+        lbl_n2 = app.font_tiny.render("  H=Mapa", True, C_DGRAY)
+        app.screen.blit(lbl_n2, (nx0 + 4 + lbl_n.get_width(), ny - 13))
