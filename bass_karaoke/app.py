@@ -442,7 +442,7 @@ class BassKaraoke:
             return
         if self.playing:
             self.playing = False
-            self._pause_mp3()
+            self._stop_mp3()
         else:
             if self.countdown_enabled:
                 self.counting_down  = True
@@ -514,7 +514,7 @@ class BassKaraoke:
         self.muted = not self.muted
         if self.playing:
             if self.muted:
-                self._pause_mp3()
+                self._stop_mp3()
             else:
                 offset = (self.beat_time / 4.0) * (60.0 / self.bpm) + self.mp3_offset_sec
                 self._play_mp3(offset)
