@@ -439,7 +439,7 @@ class BassKaraoke:
 
         # Seek del audio si está reproduciendo
         if self.playing:
-            offset = (beat16 / 4.0) * (60.0 / self.bpm) + self.mp3_offset_sec
+            offset = (beat16 / 4.0) * (60.0 / BPM_ORIGINAL) + self.mp3_offset_sec
             self._stop_mp3()
             self._play_mp3(offset)
 
@@ -462,7 +462,7 @@ class BassKaraoke:
     def _begin_play(self):
         self.playing = True
         if not self.muted:
-            offset = (self.beat_time / 4.0) * (60.0 / self.bpm) + self.mp3_offset_sec
+            offset = (self.beat_time / 4.0) * (60.0 / BPM_ORIGINAL) + self.mp3_offset_sec
             self._play_mp3(offset)
 
     def _play_mp3(self, offset_sec=0.0):
@@ -509,7 +509,7 @@ class BassKaraoke:
     def ajustar_offset(self, delta):
         self.mp3_offset_sec += delta
         if self.playing:
-            offset = (self.beat_time / 4.0) * (60.0 / self.bpm) + self.mp3_offset_sec
+            offset = (self.beat_time / 4.0) * (60.0 / BPM_ORIGINAL) + self.mp3_offset_sec
             self._stop_mp3()
             self._play_mp3(offset)
 
@@ -524,7 +524,7 @@ class BassKaraoke:
             if self.muted:
                 self._stop_mp3()
             else:
-                offset = (self.beat_time / 4.0) * (60.0 / self.bpm) + self.mp3_offset_sec
+                offset = (self.beat_time / 4.0) * (60.0 / BPM_ORIGINAL) + self.mp3_offset_sec
                 self._play_mp3(offset)
 
     def cycle_score_renderer(self):
