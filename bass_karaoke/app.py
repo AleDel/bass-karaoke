@@ -113,6 +113,14 @@ class BassKaraoke:
         # ── Mástil: mapa de notas de la canción ───────────────────────
         self.neck_map = False  # H para mostrar/ocultar
 
+        # ── Arrastre con ratón (seek) ─────────────────────────────────
+        self._drag_seeking    = False
+        self._drag_start_beat = 0.0
+        self._drag_start_mx   = 0
+
+        # ── Guitar Hero: nota detectada por el micrófono ──────────────
+        self.detected_fret_str = None   # (fret, string) o None
+
         # ── Scroll ─────────────────────────────────────────────────────
         self.px_per_16th = 30
         self.viewport_x  = 0.0
@@ -541,6 +549,11 @@ class BassKaraoke:
         if self._config_msg_timer > 0:
             self._config_msg_timer = max(0.0, self._config_msg_timer - dt)
 
+        # ── Nota detectada para Guitar Hero (funciona aunque esté pausado) ──
+        with self.pitch_lock:
+            _hz = self.stable_hz
+        self.detected_fret_str = self._hz_to_fret_string(_hz) if _hz > 0 else None
+
         if self.counting_down:
             self.countdown_timer += dt
             beat_sec = 60.0 / self.bpm
@@ -762,6 +775,31 @@ class BassKaraoke:
                 self._load_config()
             elif event.key == pygame.K_ESCAPE:
                 return False
+
+        # ── Ratón: arrastrar para seek ────────────────────────────────
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                mx, my = event.pos
+                if (TAB_Y <= my < NECK_Y
+                        and not self.device_menu_open
+                        and not self.pitch_menu_open
+                        and not self.tuner_open):
+                    self._drag_seeking    = True
+                    self._drag_start_beat = self.beat_time
+                    self._drag_start_mx   = mx
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1:
+                self._drag_seeking = False
+
+        elif event.type == pygame.MOUSEMOTION:
+            if self._drag_seeking:
+                mx, _ = event.pos
+                delta_px = mx - self._drag_start_mx
+                new_beat = max(0.0, self._drag_start_beat - delta_px / self.px_per_16th)
+                self._seek_to_beat(new_beat)
+                self._drag_start_beat = new_beat
+                self._drag_start_mx   = mx
 
         return True
 

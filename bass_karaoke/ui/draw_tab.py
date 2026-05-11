@@ -144,5 +144,69 @@ def draw_tab(app) -> None:
         app.screen.blit(txt, (nx - txt.get_width() // 2,
                                ny - txt.get_height() // 2))
 
+    # ── Guitar Hero: nota detectada por el micrófono ─────────────────────────
+    det    = getattr(app, 'detected_fret_str', None)
+    det_hz = getattr(app, 'stable_hz', 0.0)
+    if det is not None and det_hz > 0:
+        det_fret, det_str = det
+        ny = int(STR_Y[det_str])
+        cur = app.current_note()
+
+        # Calcular desviación en cents respecto a la nota esperada
+        cents = None
+        if cur is not None and cur.get('hz', 0) > 0:
+            try:
+                cents = 1200.0 * math.log2(det_hz / cur['hz'])
+            except Exception:
+                cents = None
+
+        if cents is not None:
+            ac     = abs(cents)
+            gh_col = C_OK if ac < 25 else (C_ACCENT if ac < 80 else C_ERR)
+        else:
+            gh_col = STRING_COLORS[det_str]
+
+        # Halo pulsante de la nota detectada
+        pulse = 0.5 + 0.5 * math.sin(time.time() * 10)
+        hr = int(16 + pulse * 5)
+        hs = pygame.Surface((hr * 2, hr * 2), pygame.SRCALPHA)
+        pygame.draw.circle(hs, (*gh_col, 65), (hr, hr), hr)
+        app.screen.blit(hs, (CURSOR_X - hr, ny - hr))
+
+        # Círculo sólido de la nota detectada (más pequeño que el esperado)
+        pygame.draw.circle(app.screen, gh_col, (CURSOR_X, ny), 9)
+        pygame.draw.circle(app.screen, (220, 220, 255), (CURSOR_X, ny), 9, 2)
+        f_t = app.font_tiny.render(str(det_fret), True, (10, 10, 18))
+        app.screen.blit(f_t, (CURSOR_X - f_t.get_width() // 2,
+                               ny - f_t.get_height() // 2))
+
+        # Etiqueta con nombre de nota + cents (a la derecha del cursor)
+        note_lbl  = getattr(app, 'stable_note', '?')
+        cents_lbl = f" {int(cents):+d}¢" if cents is not None else ""
+        lbl_surf  = app.font_tiny.render(f"{note_lbl}{cents_lbl}", True, gh_col)
+        lx = CURSOR_X + 18
+        ly = ny - lbl_surf.get_height() // 2
+        ly = max(TAB_Y + 2, min(ly, TAB_Y + TAB_H - lbl_surf.get_height() - 2))
+        pygame.draw.rect(app.screen, (10, 10, 18),
+                         (lx - 1, ly - 1, lbl_surf.get_width() + 4,
+                          lbl_surf.get_height() + 2))
+        app.screen.blit(lbl_surf, (lx, ly))
+
+        # Barra de afinación (cents) justo debajo del círculo
+        if cents is not None:
+            BAR_W, BAR_H = 50, 4
+            by = ny + 14
+            if TAB_Y + 6 < by < TAB_Y + TAB_H - 8:
+                bx = CURSOR_X - BAR_W // 2
+                pygame.draw.rect(app.screen, (35, 35, 55), (bx, by, BAR_W, BAR_H))
+                pygame.draw.line(app.screen, (110, 110, 130),
+                                 (CURSOR_X, by - 1), (CURSOR_X, by + BAR_H + 1), 1)
+                fill = min(BAR_W // 2, int(abs(cents) / 200.0 * BAR_W // 2))
+                if cents >= 0:
+                    pygame.draw.rect(app.screen, gh_col, (CURSOR_X, by, fill, BAR_H))
+                else:
+                    pygame.draw.rect(app.screen, gh_col,
+                                     (CURSOR_X - fill, by, fill, BAR_H))
+
     pygame.draw.line(app.screen, C_DGRAY,
                      (0, TAB_Y + TAB_H), (W, TAB_Y + TAB_H), 1)
