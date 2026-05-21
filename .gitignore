@@ -14,6 +14,7 @@ test_music21_strip.png
 syntax_check.txt
 *.mei
 *.png
+!assets/Screenshot.png
 
 # Entornos virtuales
 venv/
