@@ -1,3 +1,27 @@
-aubio/
-/aubio/**
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
+
+# Config personal del usuario (no subir)
+bass_karaoke_config.json
+
+# Archivos generados / salidas de test
+output_test.mei
+score_preview.png
+score_test.png
+test_music21_strip.png
+syntax_check.txt
+*.mei
+*.png
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+
+# VS Code
+.vscode/
+
+# Aubio (librería externa, no parte del proyecto)
+aubio/
