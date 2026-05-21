@@ -1,25 +1,25 @@
 # Bass Karaoke
 
-**Bass Karaoke** es una aplicación de karaoke para bajo eléctrico con scroll de tablatura en tiempo real, detección de pitch y visualización de partitura.
+**Bass Karaoke** is an electric bass karaoke app with real-time scrolling tablature, pitch detection, and score visualization.
 
-Basada en la canción *Feet Don't Fail Me Now* — Joy Crookes | Bajo: Dayna Fisher.
+Based on the song *Feet Don't Fail Me Now* — Joy Crookes | Bass: Dayna Fisher.
 
 ---
 
-## Instalación
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Si `aubio` da error en Windows:
+If `aubio` fails on Windows:
 
 ```bash
 pip install pygame sounddevice numpy
 pip install aubio --find-links https://github.com/aubio/aubio/releases
 ```
 
-Alternativa si `aubio` no instala (más pesado pero funciona):
+Alternative if `aubio` won't install (heavier but works):
 
 ```bash
 pip install crepe
@@ -27,15 +27,15 @@ pip install crepe
 
 ---
 
-## Uso
+## Usage
 
-1. Pon tu MP3 de la canción en la carpeta raíz del proyecto  
-   → Nómbralo `feet_dont_fail_me_now.mp3` (o cualquier nombre, lo detecta automático)
+1. Place your song MP3 in the project root folder  
+   → Name it `feet_dont_fail_me_now.mp3` (or any name — it auto-detects)
 
-2. Conecta tu bajo al ordenador (interfaz de audio USB/Jack)  
-   → Asegúrate de que Windows lo reconoce como entrada de micrófono
+2. Connect your bass to the computer (USB/Jack audio interface)  
+   → Make sure Windows recognizes it as a microphone input
 
-3. Ejecuta:
+3. Run:
 
 ```bash
 python bass_karaoke_v3.py
@@ -43,81 +43,81 @@ python bass_karaoke_v3.py
 
 ---
 
-## Controles
+## Controls
 
-| Tecla | Acción |
+| Key | Action |
 |---|---|
-| `ESPACIO` | Play / Pausa (con countdown 4-3-2-1) |
-| `C` | Activar/desactivar countdown |
-| `R` | Reiniciar |
-| `← / →` | Compás anterior / siguiente |
+| `SPACE` | Play / Pause (with 4-3-2-1 countdown) |
+| `C` | Toggle countdown |
+| `R` | Restart |
+| `← / →` | Previous / next bar |
 | `↑ / ↓` | Tempo ±5 BPM |
-| `, / .` | Offset MP3 ±0.05 s (fino) |
-| `Shift + , / .` | Offset MP3 ±0.5 s (grueso) |
-| `D` | Selector de dispositivo de audio |
-| `P` | Selector de método de pitch |
-| `S` | Cambiar renderer partitura (Verovio ↔ Music21) |
-| `M` | Silenciar/activar MP3 |
-| `T` | Afinador |
-| `F5` | Guardar configuración |
-| `ESC` | Salir |
+| `, / .` | MP3 offset ±0.05 s (fine) |
+| `Shift + , / .` | MP3 offset ±0.5 s (coarse) |
+| `D` | Audio device selector |
+| `P` | Pitch method selector |
+| `S` | Switch score renderer (Verovio ↔ Music21) |
+| `M` | Mute/unmute MP3 |
+| `T` | Tuner |
+| `F5` | Save configuration |
+| `ESC` | Quit |
 
 ---
 
-## Cómo funciona
+## How it works
 
-- La tablatura desfila de derecha a izquierda
-- La línea dorada vertical = nota que debes tocar ahora
-- El número grande en el panel izquierdo = traste a pulsar
-- Colores de cuerda: E=rojo, A=amarillo, D=azul, G=verde
+- The tablature scrolls from right to left
+- The vertical golden line = the note you should play now
+- The large number in the left panel = fret to press
+- String colors: E=red, A=yellow, D=blue, G=green
 
-**Colores de la nota actual:**
-- **Amarillo** — esperando tu input
-- **Verde** — ¡correcto! nota bien tocada
-- **Rojo** — nota incorrecta
+**Current note colors:**
+- **Yellow** — waiting for your input
+- **Green** — correct! note played right
+- **Red** — wrong note
 
-**Panel de pitch (derecha):**  
-Muestra la nota que estás tocando en tiempo real. La barra horizontal indica si estás alto/bajo de afinación. Score en % = precisión general.
-
----
-
-## Requisitos de audio
-
-- Una interfaz de audio (Focusrite, Behringer, etc.)
-- O cable bajo → jack 3.5mm → entrada micrófono del PC
-- En Windows: Panel de Control → Sonido → selecciona tu interfaz
+**Pitch panel (right):**  
+Shows the note you are playing in real time. The horizontal bar indicates if you are sharp/flat. Score in % = overall accuracy.
 
 ---
 
-## Estructura del proyecto
+## Audio requirements
+
+- An audio interface (Focusrite, Behringer, etc.)
+- Or bass cable → 3.5mm jack → PC microphone input
+- On Windows: Control Panel → Sound → select your interface
+
+---
+
+## Project structure
 
 ```
-bass_karaoke/      → paquete principal
-bass_karaoke_v3.py → punto de entrada
-models/            → modelos de detección de pitch (ONNX)
-assets/            → recursos estáticos (glyphnames, etc.)
-songs/             → canciones de ejemplo (MusicXML, TG, MIDI)
-tests/             → scripts de prueba de los detectores de pitch
-scripts/           → utilidades (listar dispositivos de audio, etc.)
+bass_karaoke/      → main package
+bass_karaoke_v3.py → entry point
+models/            → pitch detection models (ONNX)
+assets/            → static resources (glyphnames, etc.)
+songs/             → example songs (MusicXML, TG, MIDI)
+tests/             → pitch detector test scripts
+scripts/           → utilities (list audio devices, etc.)
 requirements.txt
 ```
 
 ---
 
-## Solución de problemas
+## Troubleshooting
 
 **`No module named aubio`**  
 → `pip install aubio`  
-→ Si falla, la app funciona igual pero sin reconocimiento de pitch
+→ If it fails, the app still works but without pitch recognition
 
 **`PortAudio library not found`**  
 → `pip install sounddevice --upgrade`  
-→ O reinstala: `pip install pipwin && pipwin install pyaudio`
+→ Or reinstall: `pip install pipwin && pipwin install pyaudio`
 
-**`No se detecta el bajo`**  
-→ Verifica que la interfaz de audio aparece en dispositivos de Windows  
-→ Sube el volumen de entrada en el mezclador de Windows
+**`Bass not detected`**  
+→ Check that your audio interface appears in Windows devices  
+→ Raise the input volume in the Windows mixer
 
 ---
 
-Tablatura original: [www.basslessons.be](https://www.basslessons.be)
+Original tablature: [www.basslessons.be](https://www.basslessons.be)
