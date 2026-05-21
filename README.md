@@ -4,6 +4,8 @@
 
 Based on the song *Feet Don't Fail Me Now* — Joy Crookes | Bass: Dayna Fisher.
 
+![Bass Karaoke Screenshot](assets/Screenshot.png)
+
 ---
 
 ## Installation
