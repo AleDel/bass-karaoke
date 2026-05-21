@@ -5,10 +5,10 @@ import os
 from pathlib import Path
 
 # ─── Rutas del proyecto ───────────────────────────────────────────────────────
-_BASE_DIR = Path(__file__).parent.parent   # carpeta Ensayos/
+_BASE_DIR = Path(__file__).parent.parent   # carpeta raíz del proyecto
 
-MUSICXML_PATH = str(_BASE_DIR / "cancion" / "mitab.musicxml")
-TG_PATH       = str(_BASE_DIR / "cancion" / "mitab.tg")
+MUSICXML_PATH = str(_BASE_DIR / "songs" / "mitab" / "mitab.musicxml")
+TG_PATH       = str(_BASE_DIR / "songs" / "mitab" / "mitab.tg")
 CONFIG_PATH   = str(_BASE_DIR / "bass_karaoke_config.json")
 
 # ─── Audio ────────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ PITCH_METHODS = [
 ]
 
 # Ruta del modelo ONNX de PESTO (exportado con SR=44100, chunk=512)
-PESTO_ONNX_PATH = str(_BASE_DIR / "mir-1k_g7_44100_512.onnx")
+PESTO_ONNX_PATH = str(_BASE_DIR / "models" / "mir-1k_g7_44100_512.onnx")
 
 # ─── Cuerdas del bajo ─────────────────────────────────────────────────────────
 # String 1=G, 2=D, 3=A, 4=E — convención MusicXML

@@ -1,5 +1,6 @@
 import verovio, os, re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 data_dir = os.path.join(os.path.dirname(verovio.__file__), "data")
 
@@ -36,7 +37,7 @@ def strip_tab_staff(xml_str):
                 measure.remove(children[idx])
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
 
-with open(r"C:\DEA\ALE\Ensayos\cancion\mitab.musicxml", encoding="utf-8") as f:
+with open(Path(__file__).parent.parent / "songs" / "mitab" / "mitab.musicxml", encoding="utf-8") as f:
     raw = f.read()
 clean = strip_tab_staff(raw)
 vrv = verovio.toolkit()

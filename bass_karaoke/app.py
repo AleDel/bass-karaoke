@@ -285,8 +285,8 @@ class BassKaraoke:
             import traceback; traceback.print_exc()
 
     def _find_mp3(self):
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Ensayos/
-        for folder in [os.path.join(base, "cancion"), base]:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # carpeta raíz del proyecto
+        for folder in [os.path.join(base, "songs", "mitab"), base]:
             if os.path.isdir(folder):
                 for f in os.listdir(folder):
                     if f.lower().endswith(".mp3"):

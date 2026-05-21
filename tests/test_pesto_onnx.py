@@ -11,6 +11,7 @@ Modelo: mir-1k_g7_44100_512.onnx  (SR=44100, chunk=512, batch=1)
 import pyaudio
 import numpy as np
 import onnxruntime as ort
+from pathlib import Path
 
 SR          = 44100
 CHUNK       = 512                 # ~11.6ms por chunk
@@ -21,7 +22,7 @@ HOLD_MAX    = 6                   # frames sin seal antes de limpiar buffer
 WARMUP      = 8                   # chunks iniciales descartados hasta que el cache CQT se llena
 from collections import deque
 
-ONNX_MODEL  = r"C:\DEA\ALE\Ensayos\mir-1k_g7_44100_512.onnx"
+ONNX_MODEL  = str(Path(__file__).parent.parent / "models" / "mir-1k_g7_44100_512.onnx")
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
