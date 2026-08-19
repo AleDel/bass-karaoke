@@ -14,12 +14,18 @@ try:
     VEROVIO_OK = True
     import shutil as _shutil
     _vrv_data  = os.path.join(os.path.dirname(_verovio_mod.__file__), "data")
-    _tgn_dst   = os.path.join(_vrv_data, "tuning-glyphnames.json")
-    _tgn_src   = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "..", "..", "tuning-glyphnames.json")
-    if not os.path.exists(_tgn_dst) and os.path.exists(_tgn_src):
-        _shutil.copy2(_tgn_src, _tgn_dst)
-        print("[Verovio] tuning-glyphnames.json instalado en", _vrv_data)
+    _proj_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    # El glyph de tuning vive en assets/ (antes en la raíz)
+    for _cand in (os.path.join(_proj_root, "assets", "tuning-glyphnames.json"),
+                  os.path.join(_proj_root, "tuning-glyphnames.json")):
+        if os.path.exists(_cand):
+            for _name in ("tuning-glyphnames.json", "glyphnames.json"):
+                _dst = os.path.join(_vrv_data, _name)
+                if not os.path.exists(_dst):
+                    _shutil.copy2(_cand, _dst)
+            break
+    print("[Verovio] tuning-glyphnames.json instalado en", _vrv_data)
 except ImportError:
     print("[WARN] verovio no encontrado — pip install verovio")
 
@@ -98,7 +104,7 @@ def strip_tab_staff(xml_str: str) -> str:
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding='unicode')
 
 
-def init_score_surface(notes: list):
+def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
     """
     Pre-renderiza el MusicXML con Verovio → cairosvg → pygame.Surface.
 
@@ -126,7 +132,7 @@ def init_score_surface(notes: list):
             "header":           "none",
         })
 
-        with open(MUSICXML_PATH, "r", encoding="utf-8") as f:
+        with open(musicxml_path, "r", encoding="utf-8") as f:
             raw_xml = f.read()
         clean_xml = strip_tab_staff(raw_xml)
         vrv.loadData(clean_xml)

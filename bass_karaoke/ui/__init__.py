@@ -10,6 +10,7 @@ from .draw_panels import (
 )
 from .draw_overlays import (
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
+    draw_song_menu,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "draw_note_panel", "draw_metronome", "draw_pitch_panel",
     "draw_stats_panel", "draw_bottom_bar",
     "draw_tuner", "draw_countdown", "draw_device_menu", "draw_pitch_menu",
+    "draw_song_menu",
 ]

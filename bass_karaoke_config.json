@@ -1,9 +1,30 @@
 {
-  "bpm": 113.0,
-  "mp3_offset_sec": 0.35,
-  "device_idx": 3,
+  "bpm": 60.0,
+  "bpm_map": {
+    "Infant Eyes": 60.0
+  },
+  "mp3_offset_sec": 26.26,
+  "mp3_offset_map": {
+    "Infant Eyes": 26.26
+  },
+  "tempo_maps": {
+    "Infant Eyes": [
+      [
+        0,
+        60.0,
+        "quarter"
+      ],
+      [
+        79,
+        50.0,
+        "quarter"
+      ]
+    ]
+  },
+  "device_idx": 7,
   "muted": false,
-  "pitch_method": "pesto",
+  "pitch_method": "mpm",
   "countdown_enabled": false,
-  "score_renderer": "verovio"
+  "score_renderer": "verovio",
+  "song": "Infant Eyes"
 }

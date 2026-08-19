@@ -151,7 +151,8 @@ def draw_device_menu(app) -> None:
 
 def draw_pitch_menu(app) -> None:
     LABELS = {
-        "aubio":        "aubio YINfast  (CPU, sin GPU)",
+        "mpm":          "MPM McLeod   (CPU, afinador — ideal graves)",
+        "aubio":        "aubio YIN    (CPU, sin GPU)",
         "crepe-tiny":   "CREPE tiny     (GPU recomendado)",
         "crepe-full":   "CREPE full     (GPU — más preciso)",
         "pesto":        "PESTO streaming  (PyTorch, GPU)",
@@ -188,5 +189,55 @@ def draw_pitch_menu(app) -> None:
 
     hint = app.font_tiny.render(
         "Up/Dn navegar    ENTER aplicar    ESC / P  cerrar",
+        True, C_GRAY)
+    app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
+
+
+def draw_song_menu(app) -> None:
+    mw, mh = 640, 420
+    mx, my = W // 2 - mw // 2, H // 2 - mh // 2
+
+    ov = pygame.Surface((W, H), pygame.SRCALPHA)
+    ov.fill(C_OVERLAY)
+    app.screen.blit(ov, (0, 0))
+
+    pygame.draw.rect(app.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
+    pygame.draw.rect(app.screen, C_ACCENT, (mx, my, mw, mh), 2, border_radius=12)
+
+    hdr = app.font_med.render("SELECCIONA CANCIÓN", True, C_ACCENT)
+    app.screen.blit(hdr, (mx + mw // 2 - hdr.get_width() // 2, my + 14))
+    pygame.draw.line(app.screen, C_DGRAY,
+                     (mx + 10, my + 42), (mx + mw - 10, my + 42), 1)
+
+    if not app.songs:
+        app.screen.blit(
+            app.font_med.render(
+                "No se encontraron canciones en songs/ (se necesita un .musicxml)",
+                True, C_RED),
+            (mx + 20, my + 80))
+    else:
+        row_h    = 30
+        max_rows = (mh - 78) // row_h
+        start    = max(0, app.song_menu_sel - max_rows + 1)
+        for i, s in enumerate(app.songs):
+            if i < start: continue
+            if i - start >= max_rows: break
+            ry     = my + 50 + (i - start) * row_h
+            is_sel = (i == app.song_menu_sel)
+            is_cur = (i == app.song_idx)
+            if is_sel:
+                pygame.draw.rect(app.screen, C_DGRAY,
+                                 (mx + 6, ry - 2, mw - 12, row_h - 2),
+                                 border_radius=4)
+            col  = C_GREEN if is_cur else C_WHITE if is_sel else C_GRAY
+            has  = "●" if s["mp3"] else "○"
+            txt  = f"{has} {s['name']}"
+            if not s["mp3"]:
+                txt += "   (sin mp3)"
+            lbl = app.font_small.render(txt, True, col)
+            app.screen.blit(lbl, (mx + 12, ry + 4))
+
+    hint = app.font_tiny.render(
+        "Up/Dn navegar    ENTER cargar    ESC / L  cerrar",
         True, C_GRAY)
     app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))

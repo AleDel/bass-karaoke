@@ -17,7 +17,7 @@ except ImportError:
 _STEP_DIA7 = {'C': 0, 'D': 1, 'E': 2, 'F': 3, 'G': 4, 'A': 5, 'B': 6}
 
 
-def init_score_surface_music21(notes: list):
+def init_score_surface_music21(notes: list, musicxml_path: str = MUSICXML_PATH):
     """
     Renderiza el MusicXML con music21.
     Obtiene la clave y compás de music21, luego dibuja la tira con
@@ -31,7 +31,7 @@ def init_score_surface_music21(notes: list):
     try:
         import music21 as m21
 
-        score = m21.converter.parse(MUSICXML_PATH)
+        score = m21.converter.parse(musicxml_path)
 
         target_part = None
         for part in score.parts:

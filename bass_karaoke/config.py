@@ -2,11 +2,19 @@
 Todas las constantes de configuración, audio, UI y rutas de Bass Karaoke.
 """
 import os
+import sys
 from pathlib import Path
 
 # ─── Rutas del proyecto ───────────────────────────────────────────────────────
-_BASE_DIR = Path(__file__).parent.parent   # carpeta raíz del proyecto
+if getattr(sys, "frozen", False):
+    # App empaquetada (PyInstaller): carpetas junto al .exe
+    _BASE_DIR = Path(sys.executable).parent
+else:
+    _BASE_DIR = Path(__file__).parent.parent   # carpeta raíz del proyecto
 
+SONGS_DIR     = str(_BASE_DIR / "songs")
+
+# Canción por defecto (fallback cuando no hay configuración guardada)
 MUSICXML_PATH = str(_BASE_DIR / "songs" / "mitab" / "mitab.musicxml")
 TG_PATH       = str(_BASE_DIR / "songs" / "mitab" / "mitab.tg")
 CONFIG_PATH   = str(_BASE_DIR / "bass_karaoke_config.json")
@@ -21,15 +29,41 @@ PITCH_HOLD_FRAMES = 8       # frames sin señal antes de resetear (≈370 ms)
 MIN_HZ            = 28.0
 MAX_HZ            = 400.0
 
+# ─── Pre-filtrado del audio antes del detector ───────────────────────────────
+# El bajo es dominante en armónicos: un low-pass que corte los armónicos evita
+# que YIN/CREPE/PESTO se enclaven una octava arriba de la fundamental.
+LOWPASS_HZ        = 700.0   # corta armónicos > ~700 Hz (fundamental del bajo ≤ ~275 Hz)
+HIGHPASS_HZ       = 20.0    # elimina DC y rumble < B0 (30.87 Hz) que ensucia la autocorrelación
+
+# ─── Motor aubio ─────────────────────────────────────────────────────────────
+# yinfft (no yinfast) con ventana 8192 (~186 ms ⇒ >4 periodos a E1=41 Hz).
+# tolerance 0.15 es el default estricto de YIN: con un bajo por micrófono
+# declara "sin pitch" demasiado seguido, así que lo subimos a 0.3.
+# La confianza de YIN en graves es baja por naturaleza → umbral propio 0.15.
+AUBIO_METHOD      = "yinfft"
+AUBIO_FFTSIZE     = 8192
+AUBIO_TOLERANCE   = 0.3
+AUBIO_CONF_THRESH = 0.15
+AUBIO_SILENCE_DB  = -80.0
+
+# Rango fundamental máximo del bajo (traste 15 en G = ~275 Hz + margen).
+# Se usa para plegar armónicos a la fundamental sin tocar notas reales.
+BASS_MAX_HZ       = 300.0
+
 # ── Métodos de detección de pitch disponibles ─────────────────────────────────
 PITCH_METHODS = [
-    "aubio",          # aubio YINfast  — sin GPU, mínima latencia
+    "mpm",            # McLeod Pitch Method — afinador monofónico, excelente en graves, CPU
+    "aubio",          # aubio yinfft — sin GPU, mínima latencia, bueno en graves
     "crepe-tiny",     # CREPE tiny     — rápido en GPU
     "crepe-full",     # CREPE full     — más preciso, más lento
     "pesto",          # PESTO streaming (PyTorch)
     "pesto-onnx",     # PESTO ONNX     — sin PyTorch en inferencia
     "basic-pitch",    # Spotify Basic Pitch — buffer deslizante 1.5s
 ]
+
+# ─── MPM (McLeod Pitch Method) ────────────────────────────────────────────────
+MPM_WIN       = 4096    # ventana ~93 ms — ~4 periodos a E1 (41 Hz)
+MPM_THRESHOLD = 0.80    # claridad NSDF mínima para aceptar la nota (0-1)
 
 # Ruta del modelo ONNX de PESTO (exportado con SR=44100, chunk=512)
 PESTO_ONNX_PATH = str(_BASE_DIR / "models" / "mir-1k_g7_44100_512.onnx")
