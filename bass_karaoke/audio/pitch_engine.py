@@ -342,6 +342,13 @@ class PitchEngine:
                 print("[pitch] aubio no disponible — sin detección")
                 self.on_engine_label("sin pitch")
 
+        if method == "mpm":
+            # MPM no necesita init: usa mpm_buf + _mpm_pitch en el bucle.
+            # Devuelve pitch 0 cuando no hay pico sobre el umbral → gate por pitch>0.
+            _conf_thresh = 0.0
+            print(f"[pitch] MPM (McLeod)  win={MPM_WIN}  hop={HOP_S}")
+            self.on_engine_label("MPM McLeod")
+
         if method == "basic-pitch":
             try:
                 import soundfile as _sf
@@ -382,7 +389,10 @@ class PitchEngine:
         # ── Bucle de captura ─────────────────────────────────────────────────
         audio_buf = np.zeros(_win, dtype=np.float32)
         mpm_buf   = np.zeros(MPM_WIN, dtype=np.float32)
-        pitch_buf = deque(maxlen=9)
+        # Historía corta: la mediana cambia más rápido con notas rápidas.
+        # 5 frames ≈ 232 ms (antes 9 ≈ 418 ms); la nota nueva ocupa la
+        # mayoría en 3 frames ≈ 139 ms.
+        pitch_buf = deque(maxlen=5)
         hold_count = 0
         _debug_cnt  = 0
         _prefilter, _pf_state = _build_prefilter(SAMPLERATE)
@@ -519,15 +529,20 @@ class PitchEngine:
                         det_hz   = float(np.median(list(pitch_buf)))
                         det_note = hz_to_note_name(det_hz)
 
-                        midi_votes = [int(round(12 * math.log2(h / 440) + 69))
-                                      for h in pitch_buf if h > MIN_HZ]
+                        # Fast-commit: si 2 de las últimas 3 frames coinciden en la
+                        # misma nota, esa es la nota (~93 ms). No espera mayoría del
+                        # buffer completo → no se saltan notas en corridas rápidas.
+                        recent = list(pitch_buf)[-3:]
                         stb_hz, stb_note = 0.0, "—"
-                        if midi_votes:
+                        if recent:
+                            midi_votes = [int(round(12 * math.log2(h / 440) + 69))
+                                          for h in recent]
                             counts = Counter(midi_votes)
                             top_midi, top_count = counts.most_common(1)[0]
-                            if top_count >= len(pitch_buf) * 0.55:
-                                matching = [h for h in pitch_buf
-                                            if int(round(12 * math.log2(h / 440) + 69)) == top_midi]
+                            if top_count >= 2:
+                                matching = [h for h in recent
+                                            if int(round(12 * math.log2(h / 440) + 69))
+                                            == top_midi]
                                 stb_hz   = float(np.median(matching))
                                 stb_note = hz_to_note_name(stb_hz)
                         self.on_update(det_hz, det_note, stb_hz, stb_note)
