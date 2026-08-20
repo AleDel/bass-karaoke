@@ -93,7 +93,7 @@ def draw_guitartab(app) -> None:
             continue
 
         ny      = int(STR_Y[note["string"]])
-        is_cur  = (i == app.note_idx)
+        is_cur  = (i == app.note_idx and app.beat_time >= note["start16"])
         is_past = (i < app.note_idx)
 
         fret_str = str(note["fret"])

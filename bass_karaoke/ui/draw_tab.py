@@ -107,7 +107,7 @@ def draw_tab(app) -> None:
         if nx < 10 or nx > W + 60:
             continue
         ny      = int(STR_Y[note["string"]])
-        is_cur  = (i == app.note_idx)
+        is_cur  = (i == app.note_idx and app.beat_time >= note["start16"])
         is_past = (i < app.note_idx)
 
         if is_cur:

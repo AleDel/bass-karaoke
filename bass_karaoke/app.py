@@ -221,6 +221,7 @@ class BassKaraoke:
         self._vsp       = VarispeedPlayer() if VARSPEED_OK else None
         self.mp3_path   = None
         self._pgm_loaded = False
+        self._use_vsp   = False
 
         self._load_config()
 
@@ -470,19 +471,19 @@ class BassKaraoke:
         self.mp3_path    = path
         self._vsp        = VarispeedPlayer() if VARSPEED_OK else None
         self._pgm_loaded = False
+        self._use_vsp    = False
         if not self.mp3_path:
             print("[Audio] Sin MP3 para esta canción — solo metrónomo/tablatura")
             return
         if self._vsp:
             if not self._vsp.load(self.mp3_path):
                 self._vsp = None
-        if not (self._vsp and self._vsp.loaded):
-            try:
-                pygame.mixer.music.load(self.mp3_path)
-                self._pgm_loaded = True
-                print(f"[pygame.mixer] {self.mp3_path}")
-            except Exception as e:
-                print(f"[WARN] pygame.mixer: {e}")
+        try:
+            pygame.mixer.music.load(self.mp3_path)
+            self._pgm_loaded = True
+            print(f"[pygame.mixer] {self.mp3_path}")
+        except Exception as e:
+            print(f"[WARN] pygame.mixer: {e}")
 
     def _init_score(self):
         if self.score_renderer == "music21" and MUSIC21_OK:
@@ -611,7 +612,12 @@ class BassKaraoke:
         return int(beat16 * self.px_per_16th)
 
     def current_note(self):
-        return self.notes[self.note_idx] if self.note_idx < len(self.notes) else None
+        if self.note_idx >= len(self.notes):
+            return None
+        n = self.notes[self.note_idx]
+        if self.beat_time < n["start16"] or self.beat_time >= n["start16"] + n["dur"]:
+            return None
+        return n
 
     def _speed_ratio(self):
         return self.bpm / self.bpm_original
@@ -1144,8 +1150,16 @@ class BassKaraoke:
             offset = self._mp3_sec_of_s16(self.beat_time)
             self._play_mp3(offset)
 
+    def _want_vsp(self):
+        # Usar time-stretch (varispeed/sounddevice) solo cuando hay un cambio
+        # real de tempo; con rate=1 el camino pygame (calibrado) mantiene la
+        # misma sincronización en dev y en el standalone.
+        return bool(self._vsp and self._vsp.loaded
+                    and abs(self._speed_ratio() - 1.0) >= 0.005)
+
     def _play_mp3(self, offset_sec=0.0):
-        if self._vsp and self._vsp.loaded:
+        self._use_vsp = self._want_vsp()
+        if self._use_vsp:
             self._vsp.set_speed(self._speed_ratio())
             self._vsp.play(offset_sec)
         elif self._pgm_loaded:
@@ -1153,19 +1167,19 @@ class BassKaraoke:
             pygame.mixer.music.play(start=start_ms / 1000.0)
 
     def _pause_mp3(self):
-        if self._vsp and self._vsp.loaded:
+        if self._use_vsp:
             self._vsp.pause()
         elif self._pgm_loaded:
             pygame.mixer.music.pause()
 
     def _resume_mp3(self):
-        if self._vsp and self._vsp.loaded:
+        if self._use_vsp:
             self._vsp.resume()
         elif self._pgm_loaded:
             pygame.mixer.music.unpause()
 
     def _stop_mp3(self):
-        if self._vsp and self._vsp.loaded:
+        if self._use_vsp:
             self._vsp.stop()
         elif self._pgm_loaded:
             pygame.mixer.music.stop()

@@ -148,7 +148,7 @@ def _draw_score_manual(app, SY, CURSOR_X):
         nx2 = app.px_of(note["start16"]) - vx + CURSOR_X
         if nx2 < -20 or nx2 > W + 20:
             continue
-        is_cur   = (i == app.note_idx)
+        is_cur   = (i == app.note_idx and app.beat_time >= note["start16"])
         is_past  = (i < app.note_idx)
         step     = note.get("step", "C")
         octave   = note.get("octave", 3)

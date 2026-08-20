@@ -201,7 +201,7 @@ def draw_bottom_bar(app) -> None:
             x += d.get_width()
 
     if app.mp3_path:
-        engine = " [varispeed]" if (app._vsp and app._vsp.loaded) else " [fixed]"
+        engine = " [varispeed]" if app._use_vsp else " [fixed]"
         sfx    = " [MUTE]" if app.muted else ""
         col    = C_GREEN if not app.muted else C_GRAY
         mp3s   = os.path.basename(app.mp3_path)[:44] + sfx + engine
