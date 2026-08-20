@@ -15,6 +15,30 @@ try:
 except ImportError:
     VARSPEED_OK = False
 
+try:
+    import soundfile as _sf
+    SOUNDFILE_OK = True
+except ImportError:
+    SOUNDFILE_OK = False
+
+
+def load_mp3_samples(path: str):
+    """Decodifica un MP3 a (mono float32, sr) con soundfile/libsoundfile.
+
+    Alternativa ligera a librosa para dibujar el waveform del editor de
+    alineación aunque no esté instalada la feature varispeed.
+    Devuelve (None, 0) si no se puede decodificar."""
+    if not SOUNDFILE_OK:
+        return None, 0
+    try:
+        y, sr = _sf.read(path, dtype="float32", always_2d=False)
+        if y.ndim == 2:
+            y = y.mean(axis=1)
+        return np.asarray(y, dtype=np.float32), int(sr)
+    except Exception as e:
+        print(f"[waveform] error decodificando {os.path.basename(path)}: {e}")
+        return None, 0
+
 
 class VarispeedPlayer:
     """

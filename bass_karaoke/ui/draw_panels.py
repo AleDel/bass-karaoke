@@ -71,7 +71,7 @@ def draw_metronome(app) -> None:
 
 
 def draw_pitch_panel(app) -> None:
-    from ..audio import PITCH_AVAILABLE
+    from ..audio import INPUT_AVAILABLE
 
     px, py, pw, ph = 220, LOWER_Y + 36, 634, 110
     pygame.draw.rect(app.screen, C_PANEL, (px, py, pw, ph), border_radius=10)
@@ -83,13 +83,13 @@ def draw_pitch_panel(app) -> None:
         stb_note = app.stable_note
     cur = app.current_note()
 
-    if PITCH_AVAILABLE and app.audio_devices:
+    if INPUT_AVAILABLE and app.audio_devices:
         dev_name = app.audio_devices[app.device_idx][1][:44]
         t = app.font_tiny.render(
             f"ENTRADA [{app.device_idx}]: {dev_name}  |  D=cambiar",
             True, C_GRAY)
     else:
-        t = app.font_tiny.render("pip install pyaudio aubio", True, C_RED)
+        t = app.font_tiny.render("pyaudio no disponible (entrada de audio)", True, C_RED)
     app.screen.blit(t, (px + 10, py + 6))
 
     col = (C_OK  if app.note_match is True  else
@@ -117,7 +117,7 @@ def draw_pitch_panel(app) -> None:
         app.screen.blit(app.font_big.render("Ajusta", True, C_ERR),
                         (px + 160, py + 24))
 
-    if PITCH_AVAILABLE and cur and stb_hz > 0 and cur["hz"] > 0:
+    if INPUT_AVAILABLE and cur and stb_hz > 0 and cur["hz"] > 0:
         ratio = stb_hz / cur["hz"]
         if ratio > 0:
             cents = 1200 * math.log2(ratio)
@@ -181,7 +181,7 @@ def draw_bottom_bar(app) -> None:
         ("SPC", "Play"), ("R", "Reinicio"), ("Up/Dn", "Tempo"),
         (",.", "offset±0.05"), ("S+,.", "offset±0.5"),
         ("B", "BPM/Fig"), ("D", "Disp"), ("T", "Tuner"), ("M", "Mute"),
-        ("N", "Metro"),
+        ("N", "Metro"), ("I", "Funciones"),
         ("L", "Canciones"), ("W", "Alinear"), ("H", "Mapa"), ("S", "Partitura"),
         ("F5", "Guardar"), ("F6", "Cargar"), ("ESC", "Salir"),
     ]

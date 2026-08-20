@@ -25,7 +25,12 @@ from .config import (
 )
 from .utils import fret_to_hz, hz_to_note_name, notes_match
 from .parser import parse_musicxml, parse_grace_notes
-from .audio import VarispeedPlayer, VARSPEED_OK, PitchEngine, PITCH_AVAILABLE, enumerate_devices
+from . import features
+features.ensure_on_path()
+from .audio import (
+    VarispeedPlayer, VARSPEED_OK, PitchEngine, PITCH_AVAILABLE,
+    enumerate_devices, INPUT_AVAILABLE, load_mp3_samples,
+)
 from .score import (
     init_score_surface, VEROVIO_OK, CAIROSVG_OK,
     init_score_surface_music21, MUSIC21_OK,
@@ -35,7 +40,7 @@ from .ui import (
     draw_note_panel, draw_metronome, draw_pitch_panel,
     draw_stats_panel, draw_bottom_bar,
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
-    draw_song_menu,
+    draw_song_menu, draw_feature_menu,
 )
 
 FPS = 60
@@ -130,6 +135,13 @@ class BassKaraoke:
         self.pitch_method    = "mpm"
         self.pitch_menu_open = False
         self.pitch_menu_sel  = PITCH_METHODS.index("crepe-tiny")
+
+        # ── Gestor de funcionalidades opcionales (I) ───────────────────
+        self.feature_menu_open = False
+        self.feature_menu_sel  = 0
+        self.feature_busy      = set()
+        self.feature_msg       = {}
+        self.feature_log       = []
 
         # ── Metrónomo ──────────────────────────────────────────────────
         self.metro_beat    = 0
@@ -229,7 +241,7 @@ class BassKaraoke:
             self.score_renderer = "music21"
             self._init_score_music21()
 
-        if PITCH_AVAILABLE and self.audio_devices:
+        if INPUT_AVAILABLE and self.audio_devices:
             self._start_audio()
 
     # ══════════════════════════════════════════════════════════════════
@@ -560,6 +572,39 @@ class BassKaraoke:
             self._pitch_engine = None
 
     # ══════════════════════════════════════════════════════════════════
+    #  FUNCIONALIDADES OPCIONALES (I)
+    # ══════════════════════════════════════════════════════════════════
+    def _feature_toggle(self, fid):
+        if fid in self.feature_busy:
+            return
+        self.feature_busy.add(fid)
+        self.feature_msg.pop(fid, None)
+        self.feature_log.clear()
+        if features.installed(fid):
+            features.uninstall(fid, on_log=self._feature_log,
+                               on_done=self._feature_done)
+        else:
+            features.install(fid, on_log=self._feature_log,
+                             on_done=self._feature_done)
+
+    def _feature_log(self, line):
+        self.feature_log.append(line)
+        if len(self.feature_log) > 6:
+            self.feature_log.pop(0)
+
+    def _feature_done(self, fid, ok, msg):
+        self.feature_busy.discard(fid)
+        self.feature_msg[fid] = (ok, msg)
+        if ok:
+            self._config_msg     = msg
+            self._config_msg_col = C_WAIT if "Reinicia" in msg else C_OK
+            self._config_msg_timer = 4.0
+        else:
+            self._config_msg     = msg
+            self._config_msg_col = C_ERR
+            self._config_msg_timer = 4.0
+
+    # ══════════════════════════════════════════════════════════════════
     #  HELPERS
     # ══════════════════════════════════════════════════════════════════
     def px_of(self, beat16):
@@ -761,10 +806,16 @@ class BassKaraoke:
         self.align_wave = None
         self.align_wave_n = 0
         self.align_total_sec = 0.0
-        if not (vsp and vsp.loaded and vsp.data_orig is not None):
+        arr = None
+        sr = 0
+        if vsp and vsp.loaded and vsp.data_orig is not None:
+            arr = vsp.data_orig[:, 0]
+            sr = vsp.sr
+        elif self.mp3_path:
+            arr, sr = load_mp3_samples(self.mp3_path)
+        if arr is None or sr <= 0:
             return
-        arr = vsp.data_orig[:, 0]
-        self.align_total_sec = len(arr) / float(vsp.sr)
+        self.align_total_sec = len(arr) / float(sr)
         n = len(arr)
         n_grid = min(20000, max(1, n // 4))
         if n <= n_grid:
@@ -1235,7 +1286,7 @@ class BassKaraoke:
                 break
 
         cur = self.current_note()
-        if cur and PITCH_AVAILABLE:
+        if cur and INPUT_AVAILABLE:
             with self.pitch_lock:
                 det = self.stable_hz
             if det > 0 and cur["hz"] > 0:
@@ -1291,6 +1342,8 @@ class BassKaraoke:
             draw_pitch_menu(self)
         if self.song_menu_open:
             draw_song_menu(self)
+        if self.feature_menu_open:
+            draw_feature_menu(self)
         if self.tuner_open:
             draw_tuner(self)
         if self.align_editor_open:
@@ -1489,6 +1542,20 @@ class BassKaraoke:
             return False
 
         if event.type == pygame.KEYDOWN:
+            # ── Menú funcionalidades opcionales ────────────────────────
+            if self.feature_menu_open:
+                feats = features.FEATURES
+                if event.key == pygame.K_UP:
+                    self.feature_menu_sel = max(0, self.feature_menu_sel - 1)
+                elif event.key == pygame.K_DOWN:
+                    self.feature_menu_sel = min(len(feats) - 1,
+                                                self.feature_menu_sel + 1)
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    self._feature_toggle(feats[self.feature_menu_sel]["id"])
+                elif event.key in (pygame.K_ESCAPE, pygame.K_i):
+                    self.feature_menu_open = False
+                return True
+
             # ── Menú dispositivos ──────────────────────────────────────
             if self.device_menu_open:
                 if event.key == pygame.K_UP:
@@ -1594,11 +1661,15 @@ class BassKaraoke:
                 self.tempo_display_mode = (
                     "bpm" if self.tempo_display_mode == "figura" else "figura")
             elif event.key == pygame.K_d:
-                if PITCH_AVAILABLE and self.audio_devices:
+                if INPUT_AVAILABLE and self.audio_devices:
                     self.device_menu_open = not self.device_menu_open
                     self.device_menu_sel  = self.device_idx
             elif event.key == pygame.K_p:
                 self.pitch_menu_open = not self.pitch_menu_open
+            elif event.key == pygame.K_i:
+                self.feature_menu_open = not self.feature_menu_open
+                self.feature_msg.clear()
+                self.feature_log.clear()
             elif event.key == pygame.K_l:
                 self.song_menu_open = not self.song_menu_open
                 self.song_menu_sel  = self.song_idx

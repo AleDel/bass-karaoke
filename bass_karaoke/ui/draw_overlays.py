@@ -11,7 +11,7 @@ import pygame
 from ..config import (
     W, H, STRING_COLORS, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
     C_PANEL, C_BG, C_BLUE, C_OVERLAY,
-    C_OK, C_ERR, C_GREEN, C_RED,
+    C_OK, C_ERR, C_GREEN, C_RED, C_WAIT,
     PITCH_METHODS, MIN_HZ,
 )
 
@@ -189,6 +189,113 @@ def draw_pitch_menu(app) -> None:
 
     hint = app.font_tiny.render(
         "Up/Dn navegar    ENTER aplicar    ESC / P  cerrar",
+        True, C_GRAY)
+    app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
+
+
+def draw_feature_menu(app) -> None:
+    from .. import features
+
+    mw, mh = 900, 560
+    mx, my = W // 2 - mw // 2, H // 2 - mh // 2
+
+    ov = pygame.Surface((W, H), pygame.SRCALPHA)
+    ov.fill(C_OVERLAY)
+    app.screen.blit(ov, (0, 0))
+
+    pygame.draw.rect(app.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
+    pygame.draw.rect(app.screen, C_ACCENT, (mx, my, mw, mh), 2, border_radius=12)
+
+    hdr = app.font_med.render("FUNCIONALIDADES OPCIONALES", True, C_ACCENT)
+    app.screen.blit(hdr, (mx + mw // 2 - hdr.get_width() // 2, my + 14))
+    pygame.draw.line(app.screen, C_DGRAY,
+                     (mx + 10, my + 42), (mx + mw - 10, my + 42), 1)
+
+    feats    = features.FEATURES
+    st       = features.status()
+    row_h    = 34
+    top_y    = my + 50
+    max_rows = (mh - 215) // row_h
+    start    = max(0, app.feature_menu_sel - max_rows + 1)
+
+    for i in range(start, start + max_rows):
+        if i >= len(feats):
+            break
+        f  = feats[i]
+        ry = top_y + (i - start) * row_h
+        is_sel = (i == app.feature_menu_sel)
+        if is_sel:
+            pygame.draw.rect(app.screen, C_DGRAY,
+                             (mx + 6, ry - 2, mw - 12, row_h - 2),
+                             border_radius=4)
+
+        inst = st.get(f["id"], False)
+        if f["id"] in app.feature_busy:
+            badge, bcol = ("quitando…" if inst else "instalando…", C_WAIT)
+        elif inst:
+            sflag = features.session_flag(f["id"])
+            if sflag is False:
+                badge, bcol = ("instalado · reinicia", C_WAIT)
+            else:
+                badge, bcol = ("OK", C_OK)
+        else:
+            badge, bcol = ("no instalado", C_GRAY)
+
+        name_col = C_WHITE if is_sel else C_GRAY
+        lbl = app.font_small.render(f["name"][:48], True, name_col)
+        app.screen.blit(lbl, (mx + 12, ry + 4))
+
+        size = app.font_tiny.render(f["size"], True, C_GRAY)
+        app.screen.blit(size, (mx + 470, ry + 5))
+
+        needs = app.font_tiny.render(f["needs"][:26], True, C_GRAY)
+        app.screen.blit(needs, (mx + 585, ry + 5))
+
+        b = app.font_small.render(badge, True, bcol)
+        app.screen.blit(b, (mx + mw - b.get_width() - 12, ry + 4))
+
+    # ── Detalle de la funcionalidad seleccionada ─────────────────────
+    sel    = feats[app.feature_menu_sel]
+    dy     = top_y + max_rows * row_h + 12
+    title  = app.font_small.render(f"▶ {sel['name']}", True, C_ACCENT)
+    app.screen.blit(title, (mx + 12, dy))
+    dy += 20
+
+    words = sel["desc"].split()
+    line, yy = [], dy
+    for w in words:
+        line.append(w)
+        if app.font_tiny.size(" ".join(line))[0] > mw - 32:
+            line.pop()
+            app.screen.blit(app.font_tiny.render(" ".join(line), True, C_WHITE),
+                            (mx + 14, yy))
+            line, yy = [w], yy + 16
+    if line:
+        app.screen.blit(app.font_tiny.render(" ".join(line), True, C_WHITE),
+                        (mx + 14, yy))
+    yy += 20
+
+    if sel["requires"]:
+        reqs = [b["name"].split(" —")[0] for b in feats
+                if b["id"] in sel["requires"]]
+        req = app.font_tiny.render("Requiere: " + ", ".join(reqs), True, C_WAIT)
+        app.screen.blit(req, (mx + 12, yy))
+        yy += 18
+
+    if sel["id"] in app.feature_msg:
+        ok, msg = app.feature_msg[sel["id"]]
+        mcol = C_OK if ok else C_ERR
+        ms = app.font_tiny.render(msg[:90], True, mcol)
+        app.screen.blit(ms, (mx + 12, yy))
+        yy += 18
+
+    if app.feature_log:
+        for j, line in enumerate(app.feature_log):
+            app.screen.blit(app.font_tiny.render(line[:110], True, C_GRAY),
+                            (mx + 12, yy + j * 14))
+
+    hint = app.font_tiny.render(
+        "Up/Dn navegar    ENTER = instalar / quitar    I / ESC = cerrar",
         True, C_GRAY)
     app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
 

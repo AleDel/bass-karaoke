@@ -1,13 +1,22 @@
 {
-  "bpm": 60.0,
+  "bpm": 113.0,
   "bpm_map": {
+    "Feet Dont Fail Me Now": 113.0,
     "Infant Eyes": 60.0
   },
-  "mp3_offset_sec": 26.26,
+  "mp3_offset_sec": 0.15,
   "mp3_offset_map": {
-    "Infant Eyes": 26.26
+    "Feet Dont Fail Me Now": 0.15,
+    "Infant Eyes": 25.99
   },
   "tempo_maps": {
+    "Feet Dont Fail Me Now": [
+      [
+        0,
+        113.0,
+        "quarter"
+      ]
+    ],
     "Infant Eyes": [
       [
         0,
@@ -26,5 +35,5 @@
   "pitch_method": "mpm",
   "countdown_enabled": false,
   "score_renderer": "verovio",
-  "song": "Infant Eyes"
+  "song": "Feet Dont Fail Me Now"
 }
