@@ -300,7 +300,8 @@ class PitchEngine:
                 _pesto_model.eval()
                 _pesto_dtype = next(_pesto_model.parameters()).dtype
                 _chunk_audio = CHUNK_SIZE
-                _conf_thresh = 0.30
+                # PESTO da confianza baja en graves (0.1-0.4) → gate permisivo
+                _conf_thresh = 0.10
             except Exception as _e:
                 print(f"[pitch] PESTO no disponible ({_e}) → aubio")
                 method = "aubio"
@@ -315,7 +316,8 @@ class PitchEngine:
                 _cache_size  = _ort_session.get_inputs()[1].shape[1]
                 _pesto_cache = np.zeros((1, _cache_size), dtype=np.float32)
                 _chunk_audio = 512
-                _conf_thresh = 0.30
+                # PESTO da confianza baja en graves (0.1-0.4) → gate permisivo
+                _conf_thresh = 0.10
                 _pesto_onnx_warmup = 8
                 _pesto_onnx_cnt    = 0
                 print(f"[pitch] PESTO-ONNX  cache={_cache_size}  chunk={_chunk_audio}")
@@ -330,9 +332,11 @@ class PitchEngine:
                 _pitch_o.set_unit("Hz")
                 _pitch_o.set_tolerance(AUBIO_TOLERANCE)
                 _pitch_o.set_silence(AUBIO_SILENCE_DB)
-                _conf_thresh = AUBIO_CONF_THRESH
+                # aubio ya devuelve pitch 0 cuando no hay nota; su confianza
+                # es poco fiable en graves → no gatear por ella.
+                _conf_thresh = 0.0
                 print(f"[pitch] aubio {AUBIO_METHOD}  fft={AUBIO_FFTSIZE}  "
-                      f"tol={AUBIO_TOLERANCE}  conf>{AUBIO_CONF_THRESH}")
+                      f"tol={AUBIO_TOLERANCE}  sin gate de confianza")
                 self.on_engine_label(f"aubio {AUBIO_METHOD}")
             else:
                 print("[pitch] aubio no disponible — sin detección")
@@ -401,6 +405,9 @@ class PitchEngine:
                     # Pre-filtrado: quita rumble/DC y armónicos altos que
                     # desvían la detección a la octava superior.
                     samples = _prefilter(samples)
+                    # scipy.signal.sosfilt sube a float64 si los coeficientes
+                    # son float64; aubio exige float32 y ONNX espera float.
+                    samples = samples.astype(np.float32, copy=False)
 
                     # Gate de silencio
                     if rms < 0.008:
@@ -498,7 +505,7 @@ class PitchEngine:
                     if _debug_cnt % 15 == 0:
                         self.on_debug(pitch, conf, method)
 
-                    if conf > _conf_thresh:
+                    if conf >= _conf_thresh and pitch > 0:
                         folded = _octave_to_bass_range(pitch)
                         if MIN_HZ <= folded <= MAX_HZ:
                             pitch_buf.append(folded)

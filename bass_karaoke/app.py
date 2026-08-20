@@ -555,7 +555,7 @@ class BassKaraoke:
             self.pitch_engine = label
 
         def on_debug(hz, conf, method):
-            if self.tuner_open and hz > 0:
+            if self.tuner_open:
                 print(f"[tuner-debug] {hz:.1f} Hz  conf={conf:.2f}  ({method})")
 
         self._pitch_engine = PitchEngine(
