@@ -191,6 +191,7 @@ class BassKaraoke:
         self.notes       = []
         self.sections    = []
         self.grace_notes = []
+        self.notes_stats = {}   # cobertura del parser {has_tab, total_pitch, …}
 
         # ── Canciones ──────────────────────────────────────────────────
         self.song_menu_open = False
@@ -433,6 +434,9 @@ class BassKaraoke:
         saved_bpm = (self._bpm_map or {}).get(self.song_name)
         if saved_bpm is not None:
             self.bpm = float(saved_bpm)
+        # Sin offset guardado para esta canción se parte de 0: no heredar el
+        # de la canción anterior (evita el "+25.99s fantasma" al cambiar de tema).
+        self.mp3_offset_sec = 0.0
         saved_offset = (self._offset_map or {}).get(self.song_name)
         if saved_offset is not None:
             self.mp3_offset_sec = float(saved_offset)
@@ -447,9 +451,10 @@ class BassKaraoke:
             print(f"[ERROR] MusicXML no encontrado: {self.musicxml_path}")
             return
         try:
-            notes, sections, bpm, tempo_map = parse_musicxml(self.musicxml_path)
+            notes, sections, bpm, tempo_map, stats = parse_musicxml(self.musicxml_path)
             self.notes         = notes
             self.sections      = sections
+            self.notes_stats   = stats
             self.tempo_map     = tempo_map or [(0, bpm, "quarter")]
             self.score_tempo_map = [list(x) for x in self.tempo_map]
             self.bpm           = bpm
@@ -618,6 +623,31 @@ class BassKaraoke:
         if self.beat_time < n["start16"] or self.beat_time >= n["start16"] + n["dur"]:
             return None
         return n
+
+    def coverage_warning(self):
+        """Aviso persistente sobre la cobertura del parser (o None si todo ok).
+
+        Cubre: canción sin notas de bajo, fallback por pitch con transporte o
+        descartes, y falta de MP3. La UI lo muestra en el tab y el panel."""
+        st = getattr(self, "notes_stats", {}) or {}
+        if not self.notes:
+            if st and not st.get("has_tab", True):
+                return "Sin notas de bajo: el MusicXML no trae tablatura y nada encaja en el mástil"
+            return "Sin notas de bajo en este MusicXML"
+        if st and not st.get("has_tab", True):
+            total = st.get("total_pitch", 0)
+            tra   = st.get("transposed", 0)
+            dro   = st.get("dropped", 0)
+            if dro > 0 and tra > 0:
+                return (f"Sin tablatura: {tra}/{total} notas bajadas de octava, "
+                        f"{dro} fuera del mástil")
+            if tra > 0:
+                return f"Sin tablatura: {tra}/{total} notas bajadas de octava para el bajo"
+            if dro > 0:
+                return f"Sin tablatura: {dro}/{total} notas fuera del mástil"
+        if not self.mp3_path:
+            return "Sin MP3: practica con metrónomo/tablatura"
+        return None
 
     def _speed_ratio(self):
         return self.bpm / self.bpm_original

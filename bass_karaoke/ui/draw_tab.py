@@ -40,6 +40,16 @@ def draw_tab(app) -> None:
         (CURSOR_X + 6, TAB_Y + 2),
         (CURSOR_X, TAB_Y + 14)])
 
+    # Aviso de cobertura del parser (persistente, no solo en consola)
+    warn = app.coverage_warning() if hasattr(app, "coverage_warning") else None
+    if warn:
+        wt = app.font_small.render(warn, True, (20, 20, 30))
+        bx0 = W // 2 - wt.get_width() // 2 - 10
+        pygame.draw.rect(app.screen, C_WAIT,
+                         (bx0, TAB_Y + 18, wt.get_width() + 20,
+                          wt.get_height() + 8), border_radius=6)
+        app.screen.blit(wt, (bx0 + 10, TAB_Y + 22))
+
     # Indicador de timing
     if app.last_hit_alpha > 0:
         fade      = min(1.0, app.last_hit_alpha)

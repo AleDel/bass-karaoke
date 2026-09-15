@@ -27,6 +27,15 @@ def draw_note_panel(app) -> None:
     hdr = app.font_tiny.render("SIGUIENTE NOTA", True, C_GRAY)
     app.screen.blit(hdr, (px + pw // 2 - hdr.get_width() // 2, py + 6))
 
+    if not app.notes:
+        t = app.font_big.render("SIN NOTAS", True, C_RED)
+        app.screen.blit(t, (px + pw // 2 - t.get_width() // 2,
+                             py + ph // 2 - 28))
+        h = app.font_tiny.render("revisa el MusicXML", True, C_GRAY)
+        app.screen.blit(h, (px + pw // 2 - h.get_width() // 2,
+                             py + ph // 2 + 12))
+        return
+
     cur = app.current_note()
     if not cur:
         t = app.font_big.render("FIN!", True, C_GREEN)

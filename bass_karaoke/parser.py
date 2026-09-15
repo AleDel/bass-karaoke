@@ -13,17 +13,23 @@ _SEMITONES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 _OPEN_STRING_MIDI = {4: 28, 3: 33, 2: 38, 1: 43}
 
 
-def _fret_string_from_pitch(step: str, octave: int, alter: int):
-    """Deriva (fret, string) para un bajo de 4 cuerdas desde la altura de la nota.
+def _fret_string_from_pitch(step: str, octave: int, alter: int,
+                            max_down_octaves: int = 2):
+    """Deriva (fret, string, octavas_bajadas) para un bajo de 4 cuerdas.
 
     Elige la cuerda que da el traste más bajo posible (cerca del clavijero).
-    Devuelve None si la nota queda fuera del rango del mástil (E1 … G2 + 15 trastes).
+    Si la nota queda por encima del mástil (E1 … G2 + 15 trastes) —típico en
+    partituras de otros instrumentos sin tablatura, p. ej. saxo— la transporta
+    hacia abajo por octavas (hasta `max_down_octaves`) en vez de descartarla.
+    Devuelve None solo si ni transportada encaja en el mástil.
     """
-    midi = 12 * (octave + 1) + _SEMITONES.get(step, 0) + alter
-    for string in (1, 2, 3, 4):
-        fret = midi - _OPEN_STRING_MIDI[string]
-        if 0 <= fret <= NECK_FRETS:
-            return fret, string
+    base_midi = 12 * (octave + 1) + _SEMITONES.get(step, 0) + alter
+    for down in range(max_down_octaves + 1):
+        midi = base_midi - 12 * down
+        for string in (1, 2, 3, 4):
+            fret = midi - _OPEN_STRING_MIDI[string]
+            if 0 <= fret <= NECK_FRETS:
+                return fret, string, down
     return None
 
 
@@ -34,11 +40,14 @@ def parse_musicxml(filepath: str):
     Devuelve:
         notes     — lista de dicts con keys: fret, string, dur, start16, hz,
                      note_name, measure_num, section, step, octave, alter, dur_type
+                     (+ `transposed`: octavas bajadas, solo en fallback por pitch)
         sections  — lista de (label, start16)
         bpm       — float con el tempo inicial (negras por minuto)
         tempo_map — lista de (start16, qpm) con los cambios de tempo de la
                     partitura, en negras por minuto (qpm). Si no hay marcas,
                     queda [(0, bpm)].
+        stats     — dict {has_tab, total_pitch, in_range, transposed, dropped}:
+                    cobertura del fallback por pitch (0s si hay tablatura).
     """
     tree = ET.parse(filepath)
     root = tree.getroot()
@@ -166,12 +175,20 @@ def parse_musicxml(filepath: str):
                 measure_abs += max(cur_pos, divs * 4)
 
     # Fallback: archivo sin tablatura → derivar traste/cuerda desde el pitch
+    stats = {"has_tab": found_tab, "total_pitch": 0, "in_range": 0,
+             "transposed": 0, "dropped": 0}
     if not found_tab and pitch_cands:
+        stats["total_pitch"] = len(pitch_cands)
         for c in pitch_cands:
             fs = _fret_string_from_pitch(c["step"], c["octave"], c["alter"])
             if fs is None:
+                stats["dropped"] += 1
                 continue
-            fret, string = fs
+            fret, string, down = fs
+            if down == 0:
+                stats["in_range"] += 1
+            else:
+                stats["transposed"] += 1
             hz      = fret_to_hz(fret, string)
             start16 = round((c["measure_abs"] + c["cur_pos"]) / c["divs"] * 4)
             dur16   = max(1, round(c["dur_divs"] / c["divs"] * 4))
@@ -183,8 +200,11 @@ def parse_musicxml(filepath: str):
                 "section": f"Compás {c['measure_num']}",
                 "step": c["step"], "octave": c["octave"], "alter": c["alter"],
                 "dur_type": c["dur_type"],
+                "transposed": down,
             })
-        print(f"[Parser] Sin tablatura: {len(notes)} notas derivadas del pitch")
+        print(f"[Parser] Sin tablatura: {len(notes)} notas derivadas del pitch "
+              f"({stats['in_range']} en rango, {stats['transposed']} transportadas, "
+              f"{stats['dropped']} descartadas)")
 
     # Mapa de tempo: ordenado, sin duplicados en la misma posición, y con
     # entrada inicial (start16=0). Cada entrada es (start16, qpm, unidad)
@@ -212,7 +232,7 @@ def parse_musicxml(filepath: str):
                 sec_idx += 1
             note["section"] = sections[sec_idx][0]
 
-    return notes, sections, bpm, tempo_map
+    return notes, sections, bpm, tempo_map, stats
 
 
 def parse_grace_notes(tg_path: str, notes: list) -> list:
