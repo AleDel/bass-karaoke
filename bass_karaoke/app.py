@@ -40,7 +40,7 @@ from .ui import (
     draw_note_panel, draw_metronome, draw_pitch_panel,
     draw_stats_panel, draw_bottom_bar,
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
-    draw_song_menu, draw_feature_menu,
+    draw_song_menu, draw_feature_menu, draw_help,
 )
 
 FPS = 60
@@ -130,6 +130,9 @@ class BassKaraoke:
 
         # ── Tuner ──────────────────────────────────────────────────────
         self.tuner_open = False
+
+        # ── Ayuda (F1) ───────────────────────────────────────────────────
+        self.help_open = False
 
         # ── Selector de método de pitch ────────────────────────────────
         self.pitch_method    = "mpm"
@@ -1390,6 +1393,8 @@ class BassKaraoke:
             draw_feature_menu(self)
         if self.tuner_open:
             draw_tuner(self)
+        if self.help_open:
+            draw_help(self)
         if self.align_editor_open:
             self._draw_align_editor()
         pygame.display.flip()
@@ -1565,10 +1570,10 @@ class BassKaraoke:
             stretch_lbl = "  (estirando…)" if self._vsp.stretching else ""
             speed_str   = f"  x{self._speed_ratio():.2f}{stretch_lbl}"
         engine_str = f"  [{getattr(self, 'pitch_engine', 'aubio')}]"
+        cd_str     = "countdown ON" if self.countdown_enabled else "countdown OFF"
         off_t      = self.font_tiny.render(
             f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}"
-            f"   [ ,/. fino  Shift+,/. grueso   P=pitch   "
-            f"C=countdown({'ON' if self.countdown_enabled else 'OFF'}) ]",
+            f"   {cd_str}",
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
@@ -1647,6 +1652,12 @@ class BassKaraoke:
             if self.tuner_open:
                 if event.key in (pygame.K_ESCAPE, pygame.K_t):
                     self.tuner_open = False
+                return True
+
+            # ── Ayuda (F1) ───────────────────────────────────────────────
+            if self.help_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_F1):
+                    self.help_open = False
                 return True
 
             # ── Editor de alineación (W) ───────────────────────────────
@@ -1732,6 +1743,8 @@ class BassKaraoke:
                 self.metro_sound = not self.metro_sound
             elif event.key == pygame.K_h:
                 self.neck_map = not self.neck_map
+            elif event.key == pygame.K_F1:
+                self.help_open = not self.help_open
             elif event.key == pygame.K_F5:
                 self._save_config()
             elif event.key == pygame.K_F6:
@@ -1770,7 +1783,8 @@ class BassKaraoke:
                 if (TAB_Y <= my < NECK_Y
                         and not self.device_menu_open
                         and not self.pitch_menu_open
-                        and not self.tuner_open):
+                        and not self.tuner_open
+                        and not self.help_open):
                     self._drag_seeking    = True
                     self._drag_start_beat = self.beat_time
                     self._drag_start_mx   = mx

@@ -192,28 +192,21 @@ def draw_bottom_bar(app) -> None:
     pygame.draw.rect(app.screen, C_PANEL, (0, BOTTOM_Y, W, H - BOTTOM_Y))
     pygame.draw.line(app.screen, C_DGRAY, (0, BOTTOM_Y), (W, BOTTOM_Y), 1)
 
+    # Una sola fila con lo esencial; el resto vive en la ayuda (F1)
     hints = [
-        ("SPC", "Play"), ("R", "Reinicio"), ("Up/Dn", "Tempo"),
-        (",.", "offset±0.05"), ("S+,.", "offset±0.5"),
-        ("B", "BPM/Fig"), ("D", "Disp"), ("T", "Tuner"), ("M", "Mute"),
-        ("N", "Metro"), ("I", "Funciones"),
-        ("L", "Canciones"), ("W", "Alinear"), ("H", "Mapa"), ("S", "Partitura"),
-        ("F5", "Guardar"), ("F6", "Cargar"), ("ESC", "Salir"),
+        ("SPC", "Play"), ("R", "Reinicio"), ("←/→", "Compás"),
+        ("↑/↓", "Tempo"), ("L", "Canciones"), ("W", "Alinear"),
+        ("F5", "Guardar"), ("ESC", "Salir"), ("F1", "Ayuda"),
     ]
-    # Dos filas: la fila completa desborda los 1280 px de ancho
-    hints_row_a = hints[:10]
-    hints_row_b = hints[10:]
-
-    for row_y, row in ((BOTTOM_Y + 4, hints_row_a),
-                       (BOTTOM_Y + 24, hints_row_b)):
-        x = 8
-        for key, desc in row:
-            k = app.font_small.render(key, True, C_ACCENT)
-            d = app.font_small.render(f" {desc}  ", True, C_GRAY)
-            app.screen.blit(k, (x, row_y))
-            x += k.get_width()
-            app.screen.blit(d, (x, row_y))
-            x += d.get_width()
+    x = 8
+    row_y = BOTTOM_Y + 16
+    for key, desc in hints:
+        k = app.font_small.render(key, True, C_ACCENT)
+        d = app.font_small.render(f" {desc}  ", True, C_GRAY)
+        app.screen.blit(k, (x, row_y))
+        x += k.get_width()
+        app.screen.blit(d, (x, row_y))
+        x += d.get_width()
 
     if app.mp3_path:
         engine = " [varispeed]" if app._use_vsp else " [fixed]"
@@ -225,12 +218,12 @@ def draw_bottom_bar(app) -> None:
         mp3s = "MP3 no encontrado"
     mp3_surf = app.font_small.render(mp3s, True, col)
     mp3_x    = W - mp3_surf.get_width() - 8
-    app.screen.blit(mp3_surf, (mp3_x, BOTTOM_Y + 24))
+    app.screen.blit(mp3_surf, (mp3_x, BOTTOM_Y + 16))
 
     src_surf = app.font_tiny.render(
         f"MusicXML: {len(app.notes)} notas",
         True, C_GRAY if app.notes else C_RED)
-    app.screen.blit(src_surf, (mp3_x - src_surf.get_width() - 14, BOTTOM_Y + 27))
+    app.screen.blit(src_surf, (mp3_x - src_surf.get_width() - 14, BOTTOM_Y + 19))
 
     if getattr(app, '_config_msg_timer', 0) > 0:
         msg = app.font_med.render(app._config_msg, True, app._config_msg_col)

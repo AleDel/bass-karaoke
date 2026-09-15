@@ -348,3 +348,68 @@ def draw_song_menu(app) -> None:
         "Up/Dn navegar    ENTER cargar    ESC / L  cerrar",
         True, C_GRAY)
     app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
+
+
+def draw_help(app) -> None:
+    """Overlay con todos los atajos, agrupados. F1 o ESC para cerrar."""
+    groups = [
+        ("Transporte", [
+            ("SPACE", "Play / pausa (con countdown)"),
+            ("R", "Reiniciar canción"),
+            ("← / →", "Compás anterior / siguiente"),
+            ("Arrastrar", "Seek en el tab"),
+        ]),
+        ("Tempo y offset", [
+            ("↑ / ↓", "Tempo ±5 BPM (estira el MP3 con varispeed)"),
+            ("  , / .", "Offset MP3 ±0.05 s  (Shift ±0.5 s, Ctrl ±5 s)"),
+            ("W", "Editor de alineación (waveform)"),
+            ("F5 / F6", "Guardar / cargar configuración"),
+        ]),
+        ("Sonido", [
+            ("M", "Silenciar MP3"),
+            ("N", "Metrónomo on/off"),
+            ("D", "Dispositivo de entrada"),
+            ("P", "Método de pitch"),
+            ("T", "Afinador"),
+        ]),
+        ("Vista", [
+            ("L", "Selector de canciones"),
+            ("S", "Partitura Verovio ↔ Music21"),
+            ("B", "Tempo en BPM ↔ figura"),
+            ("H", "Mapa del mástil"),
+            ("C", "Countdown on/off"),
+        ]),
+        ("Sistema", [
+            ("I", "Funcionalidades opcionales"),
+            ("F1 / ESC", "Cerrar esta ayuda"),
+        ]),
+    ]
+
+    ov = pygame.Surface((W, H), pygame.SRCALPHA)
+    ov.fill(C_OVERLAY)
+    app.screen.blit(ov, (0, 0))
+
+    row_h   = 22
+    n_rows  = sum(1 + len(g[1]) for g in groups)
+    mw, mh  = 620, 90 + n_rows * row_h
+    mx, my  = W // 2 - mw // 2, H // 2 - mh // 2
+
+    pygame.draw.rect(app.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
+    pygame.draw.rect(app.screen, C_ACCENT, (mx, my, mw, mh), 2, border_radius=12)
+
+    hdr = app.font_med.render("ATAJOS  —  F1 / ESC para cerrar", True, C_ACCENT)
+    app.screen.blit(hdr, (mx + mw // 2 - hdr.get_width() // 2, my + 14))
+    pygame.draw.line(app.screen, C_DGRAY,
+                     (mx + 10, my + 44), (mx + mw - 10, my + 44), 1)
+
+    y = my + 54
+    for title, items in groups:
+        app.screen.blit(app.font_small.render(title, True, C_BLUE),
+                        (mx + 16, y))
+        y += row_h
+        for key, desc in items:
+            app.screen.blit(app.font_small.render(key, True, C_ACCENT),
+                            (mx + 36, y))
+            app.screen.blit(app.font_small.render(desc, True, C_WHITE),
+                            (mx + 150, y))
+            y += row_h

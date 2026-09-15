@@ -167,6 +167,7 @@ movido una marca. Todo se guarda por canción en la config.
 | `I` | Menú de funcionalidades opcionales (solo standalone) |
 | `F5` | Guardar configuración |
 | `F6` | Cargar configuración |
+| `F1` | Ayuda (todos los atajos) |
 | `ESC` | Salir |
 
 ---
