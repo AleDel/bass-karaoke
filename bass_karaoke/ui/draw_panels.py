@@ -99,13 +99,27 @@ def draw_pitch_panel(app) -> None:
     cur = app.current_note()
 
     if INPUT_AVAILABLE and app.audio_devices:
-        dev_name = app.audio_devices[app.device_idx][1][:44]
+        from ..audio import device_name_warning
+        devs = app.audio_devices
+        dev = devs[app.device_idx] if 0 <= app.device_idx < len(devs) else devs[0]
+        dev_name = dev[1][:44]
         t = app.font_tiny.render(
             f"ENTRADA [{app.device_idx}]: {dev_name}  |  D=cambiar",
             True, C_GRAY)
+        app.screen.blit(t, (px + 10, py + 6))
+        warn = device_name_warning(dev[1])
+        if warn:
+            wt = app.font_tiny.render(f"({warn} ¿es la entrada del bajo?)", True, C_WAIT)
+            app.screen.blit(wt, (px + 12 + t.get_width(), py + 6))
     else:
         t = app.font_tiny.render("pyaudio no disponible (entrada de audio)", True, C_RED)
-    app.screen.blit(t, (px + 10, py + 6))
+        app.screen.blit(t, (px + 10, py + 6))
+
+    # El motor avisa en cada chunk aunque haya silencio: si pasan >2.5 s sin
+    # callbacks, el stream está roto (dispositivo inválido, p.open falló…).
+    import time as _time
+    no_signal = (getattr(app, "_pitch_engine", None) is not None
+                 and _time.time() - (getattr(app, "_pitch_last_cb", 0.0) or 0.0) > 2.5)
 
     col = (C_OK  if app.note_match is True  else
            C_ERR if app.note_match is False else C_GRAY)
@@ -125,7 +139,12 @@ def draw_pitch_panel(app) -> None:
             True, C_WHITE)
         app.screen.blit(exp, (px + 10, py + 90))
 
-    if app.note_match is True:
+    if no_signal:
+        app.screen.blit(app.font_big.render("SIN SEÑAL", True, C_RED),
+                        (px + 160, py + 24))
+        ns_hint = app.font_tiny.render("revisa volumen o pulsa D", True, C_GRAY)
+        app.screen.blit(ns_hint, (px + 162, py + 58))
+    elif app.note_match is True:
         app.screen.blit(app.font_big.render("OK!", True, C_OK),
                         (px + 160, py + 24))
     elif app.note_match is False:

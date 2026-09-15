@@ -128,6 +128,7 @@ def draw_device_menu(app) -> None:
         row_h    = 28
         max_rows = (mh - 78) // row_h
         start    = max(0, app.device_menu_sel - max_rows + 1)
+        from ..audio import device_name_warning
         for i, (_, name) in enumerate(app.audio_devices):
             if i < start: continue
             if i - start >= max_rows: break
@@ -140,8 +141,11 @@ def draw_device_menu(app) -> None:
                                  border_radius=4)
             col = C_GREEN if is_cur else C_WHITE if is_sel else C_GRAY
             lbl = app.font_small.render(
-                f"{'●' if is_cur else ' '} [{i}] {name[:56]}", True, col)
+                f"{'●' if is_cur else ' '} [{i}] {name[:48]}", True, col)
             app.screen.blit(lbl, (mx + 12, ry))
+            if device_name_warning(name):
+                tag = app.font_tiny.render(" ¿salida?", True, C_WAIT)
+                app.screen.blit(tag, (mx + 14 + lbl.get_width(), ry + 4))
 
     hint = app.font_tiny.render(
         "Up/Dn navegar    ENTER confirmar    ESC / D  cerrar",

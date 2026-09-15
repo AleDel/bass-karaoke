@@ -112,6 +112,7 @@ class BassKaraoke:
         self.note_match    = None
         self.pitch_lock    = threading.Lock()
         self._pitch_engine = None   # instancia PitchEngine
+        self._pitch_last_cb = 0.0   # último on_update (para "SIN SEÑAL")
         self.pitch_engine  = "aubio"  # etiqueta para HUD
 
         # Indicador de timing
@@ -558,6 +559,7 @@ class BassKaraoke:
                 self.detected_note = det_note
                 self.stable_hz     = stb_hz
                 self.stable_note   = stb_note
+                self._pitch_last_cb = time.time()
 
         def on_engine_label(label):
             self.pitch_engine = label

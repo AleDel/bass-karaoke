@@ -54,6 +54,23 @@ def enumerate_devices():
     return devices
 
 
+# Nombres típicos de endpoints de SALIDA o loopback que a veces aparecen como
+# "entrada" (p. ej. VB-Cable "CABLE Output", Stereo Mix). Elegirlos para un bajo
+# suele ser un error — se avisa, no se bloquea (el loopback legítimo existe).
+_OUTPUT_NAME_HINTS = (
+    "output", "salida", "loopback", "stereo mix", "mezcla",
+    "what u hear", "wave out", "monitor",
+)
+
+
+def device_name_warning(name: str):
+    """Etiqueta de aviso si el nombre huele a salida/loopback, o None."""
+    low = (name or "").lower()
+    if any(h in low for h in _OUTPUT_NAME_HINTS):
+        return "¿salida?"
+    return None
+
+
 def _octave_to_bass_range(hz: float) -> float:
     """
     Pliega una detección al rango fundamental del bajo de forma SEGURA:
