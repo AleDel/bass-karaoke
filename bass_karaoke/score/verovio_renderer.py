@@ -202,9 +202,14 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
         # que Verovio dibuja como rect vacío y que aparecen como rectángulos blancos)
         def _remove_empty_rects(m):
             tag = m.group(0)
-            # Si tiene fill explícito distinto de none → conservar
+            # Si tiene fill explícito distinto de none → conservar…
             fill_m = re.search(r'\bfill=["\']([^"\']+)["\']', tag)
             if fill_m and fill_m.group(1).lower() not in ('none', ''):
+                # …salvo fondo de página blanco: con el estilo papel se
+                # pintaría de negro (toda la tira quedaría negra).
+                if fill_m.group(1).lower() in (
+                        '#fff', '#ffffff', 'white', 'rgb(255,255,255)'):
+                    return ''
                 return tag
             # Sin fill o fill=none → eliminar
             return ''
@@ -217,14 +222,14 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
         surf = pygame.image.load(BytesIO(png_bytes)).convert_alpha()
         scale_x = surf.get_width() / vb_w
 
-        # Colorizar para tema oscuro: tinta casi blanca a opacidad plena
-        # (el gris 188/alpha 220 anterior quedaba ilegible sobre el fondo).
+        # Estilo papel: fondo blanco opaco, tinta negra (se lee como
+        # partitura de verdad; el blanco-sobre-oscuro quedaba ilegible).
         arr   = pygame.surfarray.pixels3d(surf)
         alpha = pygame.surfarray.pixels_alpha(surf)
         ink   = alpha > 20
-        arr[ink]   = [232, 232, 245]
-        arr[~ink]  = [0, 0, 0]
-        alpha[ink] = 255
+        arr[ink]   = [20, 20, 28]
+        arr[~ink]  = [250, 250, 246]
+        alpha[:, :] = 255
         del arr, alpha
 
         # ── Mapear notas por start16 usando el timemap (robusto ante notas extra) ──

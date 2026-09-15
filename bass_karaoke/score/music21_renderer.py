@@ -83,7 +83,7 @@ def _draw_score_m21_strip(notes, bar_ql, bottom_diatonic, diatonic_offset):
     img_h     = SCORE_H - 4
 
     surf = pygame.Surface((img_w, img_h))
-    surf.fill((0, 0, 0))
+    surf.fill((250, 250, 246))   # estilo papel
 
     if not notes or total16 <= 0:
         return surf, []
@@ -112,8 +112,8 @@ def _draw_score_m21_strip(notes, bar_ql, bottom_diatonic, diatonic_offset):
                          (xb, int(y_lines[0])), (xb, int(y_lines[-1])), 1)
 
     r_note   = max(3, int(half_sp * 0.85))   # ≈ 6 px
-    C_NOTE   = (232, 232, 245)
-    C_LEDGER = (130, 130, 150)
+    C_NOTE   = (20, 20, 28)
+    C_LEDGER = (80, 80, 90)
     note_xs  = []
 
     for n in notes:

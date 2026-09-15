@@ -82,7 +82,7 @@ def draw_score(app) -> None:
         band_w, band_top = 30, SY + NAME_H + 1
         band_h = SCORE_H - NAME_H - 7
         band = pygame.Surface((band_w, band_h), pygame.SRCALPHA)
-        pygame.draw.rect(band, (*C_ACCENT, 26), (0, 0, band_w, band_h),
+        pygame.draw.rect(band, (*C_ACCENT, 64), (0, 0, band_w, band_h),
                          border_radius=6)
         app.screen.blit(band, (CURSOR_X - band_w // 2, band_top))
 
