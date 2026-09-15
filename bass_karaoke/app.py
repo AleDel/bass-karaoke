@@ -1572,10 +1572,13 @@ class BassKaraoke:
             stretch_lbl = "  (estirando…)" if self._vsp.stretching else ""
             speed_str   = f"  x{self._speed_ratio():.2f}{stretch_lbl}"
         engine_str = f"  [{getattr(self, 'pitch_engine', 'aubio')}]"
-        cd_str     = "countdown ON" if self.countdown_enabled else "countdown OFF"
+        # Estados con su tecla: se ve qué está activo y cómo cambiarlo.
+        cd_str = "C:countdown ON" if self.countdown_enabled else "C:countdown OFF"
+        metro_str = "N:metro ON" if self.metro_sound else "N:metro OFF"
+        mute_str = " · M:MUTE" if self.muted else ""
         off_t      = self.font_tiny.render(
             f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}"
-            f"   {cd_str}",
+            f"   {cd_str} · {metro_str}{mute_str}",
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
