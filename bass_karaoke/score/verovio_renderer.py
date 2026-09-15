@@ -214,23 +214,56 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
             # Sin fill o fill=none → eliminar
             return ''
         svg_clean = re.sub(r'<rect\b[^/]*/>', _remove_empty_rects, svg_clean)
-        target_h  = SCORE_H - 4
+        import numpy as _np
+        # Altura útil de la tira en la app (ver draw_score: NAME_H=14, blit en
+        # SY+NAME_H+1 con clip hasta SY+SCORE_H).
+        target_h = SCORE_H - 15
+        # Supersample x2 para trazos nítidos al reducir.
         png_bytes = cairosvg.svg2png(
             bytestring=svg_clean.encode(),
-            output_height=target_h,
+            output_height=target_h * 2,
         )
-        surf = pygame.image.load(BytesIO(png_bytes)).convert_alpha()
+        big = pygame.image.load(BytesIO(png_bytes)).convert_alpha()
+
+        # Recortar el aire vertical de la página: sin esto el pentagrama ocupa
+        # ~1/3 de la tira y se ve minúsculo. Solo recorte vertical → las X no
+        # cambian y el mapeo de notas sigue válido. El recorte se centra en el
+        # pentagrama (no en la tinta total) para no dejar margen abajo.
+        _alp = pygame.surfarray.pixels_alpha(big)
+        _any = (_alp > 20).max(axis=0)
+        _rows = _np.where(_any)[0]
+        _frac = (_alp > 20).mean(axis=0)
+        _staff = _np.where(_frac > 0.25)[0]   # líneas del pentagrama: densas
+        del _alp
+        if len(_rows):
+            pad = 10
+            y0 = int(_rows.min()) - pad
+            y1 = int(_rows.max()) + pad
+            if len(_staff):
+                staff_c = float(_np.median(_staff))
+                hh = max(staff_c - y0, y1 - staff_c)
+                y0, y1 = int(staff_c - hh), int(staff_c + hh)
+            y0 = max(0, y0)
+            y1 = min(big.get_height(), y1)
+            big = big.subsurface(pygame.Rect(0, y0, big.get_width(),
+                                             max(1, y1 - y0))).copy()
+        if big.get_height() != target_h:
+            ratio = target_h / big.get_height()
+            big = pygame.transform.smoothscale(
+                big, (max(1, int(big.get_width() * ratio)), target_h))
+        surf = big
         scale_x = surf.get_width() / vb_w
 
-        # Estilo papel: fondo blanco opaco, tinta negra (se lee como
-        # partitura de verdad; el blanco-sobre-oscuro quedaba ilegible).
+        # Estilo papel mezclando por alfa (conserva el antialiasing; el umbral
+        # duro anterior dejaba bordes dentados).
         arr   = pygame.surfarray.pixels3d(surf)
         alpha = pygame.surfarray.pixels_alpha(surf)
-        ink   = alpha > 20
-        arr[ink]   = [20, 20, 28]
-        arr[~ink]  = [250, 250, 246]
+        _a = (alpha[..., None].astype(_np.float32)) / 255.0
+        _ink   = _np.array([20, 20, 28], dtype=_np.float32)
+        _paper = _np.array([250, 250, 246], dtype=_np.float32)
+        arr[:, :, :] = (_ink * _a + _paper * (1.0 - _a)).astype(_np.uint8)
         alpha[:, :] = 255
-        del arr, alpha
+        del arr, alpha, _a
 
         # ── Mapear notas por start16 usando el timemap (robusto ante notas extra) ──
         # Construir {start16 → pos_x_imagen} desde el timemap + posiciones SVG
