@@ -217,13 +217,14 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
         surf = pygame.image.load(BytesIO(png_bytes)).convert_alpha()
         scale_x = surf.get_width() / vb_w
 
-        # Colorizar para tema oscuro
+        # Colorizar para tema oscuro: tinta casi blanca a opacidad plena
+        # (el gris 188/alpha 220 anterior quedaba ilegible sobre el fondo).
         arr   = pygame.surfarray.pixels3d(surf)
         alpha = pygame.surfarray.pixels_alpha(surf)
         ink   = alpha > 20
-        arr[ink]   = [188, 188, 210]
+        arr[ink]   = [232, 232, 245]
         arr[~ink]  = [0, 0, 0]
-        alpha[ink] = 220
+        alpha[ink] = 255
         del arr, alpha
 
         # ── Mapear notas por start16 usando el timemap (robusto ante notas extra) ──

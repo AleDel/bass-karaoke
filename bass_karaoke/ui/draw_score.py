@@ -77,6 +77,15 @@ def draw_score(app) -> None:
             app.screen.blit(surf_n, (tx, SY + 1))
         # ────────────────────────────────────────────────────────────────────
 
+        # Banda de resaltado en el cursor: la posición actual se ve a golpe
+        # de vista aunque la nota quede entre dos cabezas del render.
+        band_w, band_top = 30, SY + NAME_H + 1
+        band_h = SCORE_H - NAME_H - 7
+        band = pygame.Surface((band_w, band_h), pygame.SRCALPHA)
+        pygame.draw.rect(band, (*C_ACCENT, 26), (0, 0, band_w, band_h),
+                         border_radius=6)
+        app.screen.blit(band, (CURSOR_X - band_w // 2, band_top))
+
         pygame.draw.line(app.screen, C_ACCENT,
                          (CURSOR_X, SY + NAME_H + 1), (CURSOR_X, SY + SCORE_H - 6), 2)
         pygame.draw.polygon(app.screen, C_ACCENT, [
