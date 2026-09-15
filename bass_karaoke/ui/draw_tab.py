@@ -86,18 +86,33 @@ def draw_tab(app) -> None:
     total16 = (app.notes[-1]["start16"] + app.notes[-1]["dur"]
                if app.notes else 0)
 
+    # Intro: el bajo aún no ha entrado — decirlo en vez de mostrar vacío.
+    if app.notes and app.beat_time < app.notes[0]["start16"] - 1:
+        remain16 = app.notes[0]["start16"] - app.beat_time
+        secs = remain16 / 4.0 * (60.0 / max(1, app.bpm))
+        msg = f"El bajo entra en {secs:.0f}s  —  SPACE para tocar"
+        mt = app.font_med.render(msg, True, C_GREEN)
+        bg = pygame.Surface((mt.get_width() + 24, mt.get_height() + 12),
+                            pygame.SRCALPHA)
+        pygame.draw.rect(bg, (10, 30, 18, 220), bg.get_rect(), border_radius=8)
+        pygame.draw.rect(bg, (*C_GREEN, 220), bg.get_rect(), 1, border_radius=8)
+        app.screen.blit(bg, (W // 2 - bg.get_width() // 2,
+                             TAB_Y + TAB_H // 2 - bg.get_height() // 2))
+        app.screen.blit(mt, (W // 2 - mt.get_width() // 2,
+                             TAB_Y + TAB_H // 2 - mt.get_height() // 2))
+
     prev_meas = -1
     for note in app.notes:
         nx = app.px_of(note["start16"]) - vx + CURSOR_X
         if 30 < nx < W and note["measure_num"] != prev_meas:
             prev_meas = note["measure_num"]
-            m = app.font_tiny.render(str(note["measure_num"]), True, C_DGRAY)
+            m = app.font_tiny.render(str(note["measure_num"]), True, C_GRAY)
             app.screen.blit(m, (nx - m.get_width() // 2, TAB_Y + 2))
 
     for b in range(0, total16 + 16, 16):
         bx = app.px_of(b) - vx + CURSOR_X
         if 30 < bx < W:
-            pygame.draw.line(app.screen, C_DGRAY,
+            pygame.draw.line(app.screen, (55, 55, 80),
                              (bx, TAB_Y + 6), (bx, TAB_Y + TAB_H - 6), 1)
 
     for label, b16 in app.sections:

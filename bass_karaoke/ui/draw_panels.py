@@ -38,10 +38,16 @@ def draw_note_panel(app) -> None:
 
     cur = app.current_note()
     if not cur:
-        t = app.font_big.render("FIN!", True, C_GREEN)
-        app.screen.blit(t, (px + pw // 2 - t.get_width() // 2,
-                             py + ph // 2 - 20))
-        return
+        # En intros y silencios no hay nota sonando, pero el panel se llama
+        # SIGUIENTE NOTA: mostrar la próxima en vez de un "FIN!" engañoso.
+        # FIN! solo cuando ya no quedan notas (note_idx al final).
+        if app.note_idx < len(app.notes):
+            cur = app.notes[app.note_idx]
+        else:
+            t = app.font_big.render("FIN!", True, C_GREEN)
+            app.screen.blit(t, (px + pw // 2 - t.get_width() // 2,
+                                 py + ph // 2 - 20))
+            return
 
     fret_big = app.font_huge.render(str(cur["fret"]), True, C_ACCENT)
     app.screen.blit(fret_big, (px + pw // 2 - fret_big.get_width() // 2, py + 12))
