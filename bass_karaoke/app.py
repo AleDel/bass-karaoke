@@ -164,6 +164,15 @@ class BassKaraoke:
         # ── Guitar Hero: nota detectada por el micrófono ──────────────
         self.detected_fret_str = None   # (fret, string) o None
 
+        # ── Modo aprendizaje: nota pulsada con el ratón ──────────────
+        self.preview_hz       = 0.0
+        self.preview_name     = "—"
+        self.preview_label    = ""
+        self.preview_timer    = 0.0   # segundos restantes del resaltado
+        self.preview_fret_str = None  # (fret, string) o None
+        self.preview_midi     = None  # midi o None
+        self._preview_sound   = None  # retener el Sound para que no lo libere el GC
+
         # ── Editor de alineación MP3 (W) ──────────────────────────────
         self.align_editor_open = False
         self.align_wave        = None   # (col_min, col_max) normalizados a ±1
@@ -1100,6 +1109,119 @@ class BassKaraoke:
         return best if best_diff < 0.75 else None
 
     # ══════════════════════════════════════════════════════════════════
+    #  MODO APRENDIZAJE — pulsar mástil / piano con el ratón
+    # ══════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _midi_to_hz(midi: int) -> float:
+        return 440.0 * (2 ** ((int(midi) - 69) / 12.0))
+
+    @staticmethod
+    def _build_tone(hz: float, duration: float = 0.9):
+        """Sintetiza un tono de bajo (fundamental + armónicos) como Sound."""
+        import numpy as np
+        SR = 44100
+        hz = max(20.0, min(2000.0, float(hz)))
+        n  = max(1, int(SR * duration))
+        t  = np.linspace(0, duration, n, endpoint=False)
+        # Ataque corto para evitar clic + caída exponencial tipo bajo
+        attack = min(n, int(SR * 0.012))
+        env = np.exp(-t * 3.2)
+        if attack > 0:
+            env[:attack] *= np.linspace(0, 1, attack)
+        wave = (np.sin(2 * np.pi * hz * t)
+                + 0.35 * np.sin(4 * np.pi * hz * t) * np.exp(-t * 2.0)
+                + 0.18 * np.sin(6 * np.pi * hz * t) * np.exp(-t * 3.0))
+        wave = (wave * env * 22000).astype(np.int16)
+        stereo = np.column_stack([wave, wave])
+        return pygame.sndarray.make_sound(np.ascontiguousarray(stereo))
+
+    def preview_note(self, hz, name, label, fret_str=None, midi=None):
+        """Muestra y hace sonar una nota pulsada (no interfiere con la canción)."""
+        try:
+            if hz and hz > 0:
+                self._preview_sound = self._build_tone(hz)
+                self._preview_sound.play()
+        except Exception as e:
+            print(f"[Preview] no puedo sonar: {e}")
+        self.preview_hz       = float(hz or 0.0)
+        self.preview_name     = name or "—"
+        self.preview_label    = label or ""
+        self.preview_timer    = 2.5
+        self.preview_fret_str = fret_str
+        self.preview_midi     = midi
+
+    def _neck_hit(self, pos):
+        """(fret, string) bajo el cursor o None. Replica la geometría de draw_neck."""
+        try:
+            mx, my = int(pos[0]), int(pos[1])
+        except Exception:
+            return None
+        if not (0 <= mx < NECK_W and NECK_Y <= my < NECK_Y + NECK_H):
+            return None
+        STR_MARG = 14
+        ss = (NECK_H - STR_MARG * 2 - 16) / 3
+        str_y = {s: NECK_Y + STR_MARG + ss * (s - 1) for s in range(1, 5)}
+        # Cuerda más cercana (tolerancia ~ media distancia entre cuerdas)
+        best_s, best_d = None, 1e9
+        for s, y in str_y.items():
+            d = abs(my - y)
+            if d < best_d:
+                best_d, best_s = d, s
+        if best_s is None or best_d > (ss * 0.6 + 4):
+            return None
+        if mx < NECK_AREA_X:
+            fret = 0
+        else:
+            fret_space = NECK_AREA_W / max(1, NECK_FRETS)
+            fret = int((mx - NECK_AREA_X) // fret_space) + 1
+            fret = max(0, min(NECK_FRETS, fret))
+        return (fret, best_s)
+
+    def _piano_hit(self, pos):
+        """MIDI de la tecla bajo el cursor o None (las negras tienen prioridad)."""
+        try:
+            mx, my = int(pos[0]), int(pos[1])
+        except Exception:
+            return None
+        if not (PIANO_X <= mx < PIANO_X + PIANO_W
+                and PIANO_Y <= my < PIANO_Y + PIANO_H):
+            return None
+        if not self._piano_keys_list:
+            from .ui import build_piano_keys
+            self._piano_keys_list = build_piano_keys(
+                PIANO_START_MIDI, PIANO_END_MIDI,
+                PIANO_X, PIANO_Y, PIANO_W, PIANO_H)
+        # Dos pasadas: primero negras (están encima), luego blancas
+        for black_first in (True, False):
+            for key in self._piano_keys_list:
+                if key["black"] != black_first:
+                    continue
+                if key["rect"].collidepoint(mx, my):
+                    return key["midi"]
+        return None
+
+    def _preview_from_neck(self, fret, string):
+        hz   = fret_to_hz(fret, string)
+        name = hz_to_note_name(hz)
+        label = f"{name} · traste {fret} · cuerda {STRING_NAMES[string]}"
+        # Enlace cruzado: también ilumina la tecla del piano correspondiente
+        midi = int(round(12 * math.log2(hz / 440.0) + 69)) if hz > 0 else None
+        self.preview_note(hz, name, label,
+                          fret_str=(fret, string), midi=midi)
+
+    def _preview_from_piano(self, midi):
+        hz   = self._midi_to_hz(midi)
+        name = hz_to_note_name(hz)
+        label = f"{name} · piano · {hz:.1f} Hz"
+        # Enlace cruzado: también ilumina la posición en el mástil (si existe)
+        try:
+            fret_str = self._hz_to_fret_string(hz) if hz > 0 else None
+        except Exception:
+            fret_str = None
+        self.preview_note(hz, name, label,
+                          fret_str=fret_str, midi=int(midi))
+
+    # ══════════════════════════════════════════════════════════════════
     #  CONTROLES
     # ══════════════════════════════════════════════════════════════════
     def _measure_starts(self):
@@ -1276,6 +1398,11 @@ class BassKaraoke:
         self._t += dt
         if self._config_msg_timer > 0:
             self._config_msg_timer = max(0.0, self._config_msg_timer - dt)
+        if self.preview_timer > 0:
+            self.preview_timer = max(0.0, self.preview_timer - dt)
+            if self.preview_timer <= 0:
+                self.preview_fret_str = None
+                self.preview_midi     = None
 
         # ── Editor de alineación: reproducción natural del MP3 ─────────
         if self.align_editor_open:
@@ -1784,6 +1911,18 @@ class BassKaraoke:
                     self._align_zoom(1 / 1.3, event.pos)
                 return True
             if event.button == 1:
+                # ── Modo aprendizaje: pulsar mástil o piano ──────────
+                if not (self.device_menu_open or self.pitch_menu_open
+                        or self.song_menu_open or self.feature_menu_open
+                        or self.tuner_open or self.help_open):
+                    _midi = self._piano_hit(event.pos)
+                    if _midi is not None:
+                        self._preview_from_piano(_midi)
+                        return True
+                    _fs = self._neck_hit(event.pos)
+                    if _fs is not None:
+                        self._preview_from_neck(*_fs)
+                        return True
                 mx, my = event.pos
                 if (TAB_Y <= my < NECK_Y
                         and not self.device_menu_open

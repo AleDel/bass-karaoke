@@ -9,7 +9,7 @@ from ..config import (
     NECK_FRETS, NECK_DOT_FRETS, NECK_OCT_FRETS,
     STRING_NAMES, STRING_COLORS, STRING_THICK,
     C_BG, C_DGRAY, C_GRAY, C_BLUE, C_OK, C_ERR, C_WAIT,
-    C_WOOD, C_WOOD2, C_NUT, C_FRET, C_DOT,
+    C_WOOD, C_WOOD2, C_NUT, C_FRET, C_DOT, C_ACCENT,
     MIN_HZ,
 )
 
@@ -114,7 +114,7 @@ def draw_neck(app) -> None:
                 pygame.draw.circle(app.screen, C_BLUE, (xc, yc), 9, 2)
 
     pygame.draw.rect(app.screen, C_DGRAY, (nx0, ny, nw, nh), 1)
-    lbl_n = app.font_tiny.render("MASTIL DEL BAJO  (trastes 0–15)", True, C_GRAY)
+    lbl_n = app.font_tiny.render("MASTIL DEL BAJO  (trastes 0–15 · clic = oír nota)", True, C_GRAY)
     app.screen.blit(lbl_n, (nx0 + 4, ny - 13))
 
     # ── Mapa de notas de la canción (H para activar) ──────────────────────────
@@ -163,3 +163,28 @@ def draw_neck(app) -> None:
         # Etiqueta normal con sugerencia
         lbl_n2 = app.font_tiny.render("  H=Mapa", True, C_DGRAY)
         app.screen.blit(lbl_n2, (nx0 + 4 + lbl_n.get_width(), ny - 13))
+
+    # ── Modo aprendizaje: nota pulsada con el ratón (encima del mapa) ──
+    prev = getattr(app, "preview_fret_str", None)
+    if prev and getattr(app, "preview_timer", 0) > 0:
+        pf, ps = prev
+        xc = int(note_x(pf))
+        yc = int(STR_Y.get(ps, 0))
+        if xc <= nx0 + nw - 4 and ps in STR_Y:
+            pygame.draw.circle(app.screen, C_ACCENT, (xc, yc), 13, 3)
+            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), 10)
+            pygame.draw.circle(app.screen, C_ACCENT, (xc, yc), 10, 1)
+            nm = app.font_small.render(getattr(app, "preview_name", ""),
+                                        True, C_ACCENT)
+            app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 30))
+            # Etiqueta completa (nota + traste + cuerda + Hz)
+            hz = getattr(app, "preview_hz", 0.0) or 0.0
+            full = f"{app.preview_label}  {hz:.1f} Hz" if hz else app.preview_label
+            fl = app.font_small.render(full, True, C_ACCENT)
+            bx = min(max(xc - fl.get_width() // 2, nx0 + 4), nx0 + nw - fl.get_width() - 4)
+            bg = pygame.Surface((fl.get_width() + 12, fl.get_height() + 6))
+            bg.fill((20, 20, 35))
+            app.screen.blit(bg, (bx - 6, ny - 34))
+            pygame.draw.rect(app.screen, C_ACCENT, (bx - 6, ny - 34,
+                             fl.get_width() + 12, fl.get_height() + 6), 1)
+            app.screen.blit(fl, (bx, ny - 31))
