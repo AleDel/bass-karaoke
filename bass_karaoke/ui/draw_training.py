@@ -10,11 +10,10 @@ from ..config import (
     W, H, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
     C_PANEL, C_BLUE, C_GREEN, C_RED, C_OVERLAY, MIN_HZ,
 )
+from ..training import LEVELS as TR_LEVELS
 
 
 def draw_training(app) -> None:
-    from ..app import TR_LEVELS
-
     mw, mh = 620, 400
     mx, my = W // 2 - mw // 2, H // 2 - mh // 2
 
