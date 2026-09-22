@@ -1,58 +1,53 @@
 """
-Overlay del entrenador de notas del mástil (tecla E).
+Panel del entrenador de notas (tecla E) — estilo Walking Lab.
 
-Muestra la nota objetivo, lo que oye el micro, una barra de
-"mantén la nota" y el marcador. La validación vive en BassKaraoke.update.
+Ocupa la zona del tab (el mástil y el piano quedan visibles) y muestra
+la nota objetivo en letra y en pentagrama (clave de fa). La validación
+vive en BassKaraoke.update.
 """
 import pygame
 
 from ..config import (
-    W, H, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
-    C_PANEL, C_BLUE, C_GREEN, C_RED, C_OVERLAY, MIN_HZ,
+    TAB_Y, NECK_Y, W,
+    C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
+    C_BLUE, C_GREEN, C_RED,
 )
-from ..training import LEVELS as TR_LEVELS
+from ..training import LEVELS, accuracy
+from .staff import draw_mini_staff
+
+STAFF_W = 200
 
 
 def draw_training(app) -> None:
-    mw, mh = 620, 400
-    mx, my = W // 2 - mw // 2, H // 2 - mh // 2
+    y0, h = TAB_Y, NECK_Y - TAB_Y
 
-    ov = pygame.Surface((W, H), pygame.SRCALPHA)
-    ov.fill(C_OVERLAY)
-    app.screen.blit(ov, (0, 0))
+    pygame.draw.rect(app.screen, (13, 13, 24), (0, y0, W, h))
+    pygame.draw.line(app.screen, C_ACCENT, (0, y0), (W, y0), 2)
+    pygame.draw.line(app.screen, C_DGRAY, (0, y0 + h - 1), (W, y0 + h - 1), 1)
 
-    pygame.draw.rect(app.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
-    pygame.draw.rect(app.screen, C_ACCENT, (mx, my, mw, mh), 2, border_radius=12)
-
-    hdr = app.font_med.render("ENTRENADOR · ENCUENTRA LA NOTA", True, C_ACCENT)
-    app.screen.blit(hdr, (mx + mw // 2 - hdr.get_width() // 2, my + 14))
-    pygame.draw.line(app.screen, C_DGRAY,
-                     (mx + 10, my + 44), (mx + mw - 10, my + 44), 1)
-
-    lvl = TR_LEVELS.get(app.tr_level, TR_LEVELS[1])
+    lvl = LEVELS.get(app.tr_level, LEVELS[1])
+    title = app.font_med.render("ENTRENADOR · ENCUENTRA LA NOTA", True, C_ACCENT)
+    app.screen.blit(title, (12, y0 + 8))
     lvl_t = app.font_small.render(
         f"Nivel {app.tr_level} · {lvl['title']}   (1/2/3 cambian)",
         True, C_GRAY)
-    app.screen.blit(lvl_t, (mx + mw // 2 - lvl_t.get_width() // 2, my + 52))
+    app.screen.blit(lvl_t, (12, y0 + 38))
 
     big = app.font_huge.render(app.tr_target_name, True, C_WHITE)
-    app.screen.blit(big, (mx + mw // 2 - big.get_width() // 2, my + 78))
-
+    app.screen.blit(big, (12, y0 + 66))
     sub = app.font_small.render("Tócala en cualquier cuerda y traste",
                                 True, C_GRAY)
-    app.screen.blit(sub, (mx + mw // 2 - sub.get_width() // 2, my + 162))
+    app.screen.blit(sub, (14, y0 + 152))
 
     with app.pitch_lock:
         det_note = app.stable_note
         det_hz   = app.stable_hz
-    oigo_col = C_BLUE if det_hz > MIN_HZ else C_GRAY
+    oigo_col = C_BLUE if det_hz > 0 else C_GRAY
     oigo = app.font_med.render(f"Oigo: {det_note}", True, oigo_col)
-    app.screen.blit(oigo, (mx + mw // 2 - oigo.get_width() // 2, my + 190))
+    app.screen.blit(oigo, (12, y0 + 182))
 
-    # Barra de "mantén la nota" (progreso hacia tr_hold_need)
-    bw, bh = 340, 14
-    bx = mx + mw // 2 - bw // 2
-    by = my + 226
+    bw, bh = 300, 14
+    bx, by = 12, y0 + 220
     pygame.draw.rect(app.screen, C_DGRAY, (bx, by, bw, bh), border_radius=5)
     frac = min(1.0, app.tr_hold / max(0.01, app.tr_hold_need))
     if frac > 0:
@@ -61,19 +56,28 @@ def draw_training(app) -> None:
 
     tot, ok = app.tr_total, app.tr_ok
     if tot > 0:
-        pct = int(100 * ok / tot)
+        pct = accuracy(ok, tot)
         scol = C_GREEN if pct >= 70 else C_RED if pct < 40 else C_ACCENT
         sc = app.font_med.render(f"{ok}/{tot}  ({pct}%)", True, scol)
     else:
         sc = app.font_med.render("toca la nota para empezar", True, C_GRAY)
-    app.screen.blit(sc, (mx + mw // 2 - sc.get_width() // 2, my + 250))
+    app.screen.blit(sc, (12, y0 + 244))
 
     if app.tr_msg:
         msg = app.font_small.render(app.tr_msg[:60], True, C_GRAY)
-        app.screen.blit(msg, (mx + mw // 2 - msg.get_width() // 2, my + 282))
+        app.screen.blit(msg, (12, y0 + 276))
 
-    hint_txt = "N/Espacio=otra · H=pista en piano · 1/2/3 nivel · E salir"
+    hints = app.font_tiny.render(
+        "N=otra · H=pista en piano · 1/2/3 nivel · E salir", True, C_GRAY)
+    app.screen.blit(hints, (12, y0 + h - 22))
+
+    # ── Pentagrama (derecha): la objetivo, octava de bajo ──────────
+    sx = W - STAFF_W - 16
+    sy = y0 + 30
+    disp = (app.tr_target_midi - 12
+            if app.tr_target_midi is not None else None)
+    draw_mini_staff(app, sx, sy, STAFF_W, disp)
     if app.tr_hint:
-        hint_txt = "Pista: clase de tono iluminada en el piano · " + hint_txt
-    hint = app.font_tiny.render(hint_txt, True, C_GRAY)
-    app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 24))
+        hint_t = app.font_tiny.render("pista: clase de tono en el piano",
+                                      True, C_GRAY)
+        app.screen.blit(hint_t, (sx, sy - 18))

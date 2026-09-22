@@ -1,59 +1,54 @@
 """
-Overlay del oído call-response (tecla O).
+Panel del oído call-response (tecla O) — estilo Walking Lab.
 
-La app hace sonar una nota oculta; el usuario la repite con el bajo.
-Al acertar (o al saltar con N) se revela el nombre y suena la siguiente.
+Ocupa la zona del tab (mástil y piano visibles). La nota suena oculta
+("?"); al acertar o saltar se revela en letra y en pentagrama.
 """
 import pygame
 
 from ..config import (
-    W, H, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
-    C_PANEL, C_BLUE, C_GREEN, C_RED, C_OVERLAY, MIN_HZ,
+    TAB_Y, NECK_Y, W,
+    C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
+    C_BLUE, C_GREEN, C_RED,
 )
 from ..training import LEVELS, accuracy
+from .staff import draw_mini_staff
+
+STAFF_W = 200
 
 
 def draw_ear(app) -> None:
-    mw, mh = 620, 400
-    mx, my = W // 2 - mw // 2, H // 2 - mh // 2
+    y0, h = TAB_Y, NECK_Y - TAB_Y
 
-    ov = pygame.Surface((W, H), pygame.SRCALPHA)
-    ov.fill(C_OVERLAY)
-    app.screen.blit(ov, (0, 0))
-
-    pygame.draw.rect(app.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
-    pygame.draw.rect(app.screen, C_ACCENT, (mx, my, mw, mh), 2, border_radius=12)
-
-    hdr = app.font_med.render("OÍDO · ESCUCHA Y REPITE", True, C_ACCENT)
-    app.screen.blit(hdr, (mx + mw // 2 - hdr.get_width() // 2, my + 14))
-    pygame.draw.line(app.screen, C_DGRAY,
-                     (mx + 10, my + 44), (mx + mw - 10, my + 44), 1)
+    pygame.draw.rect(app.screen, (13, 13, 24), (0, y0, W, h))
+    pygame.draw.line(app.screen, C_ACCENT, (0, y0), (W, y0), 2)
+    pygame.draw.line(app.screen, C_DGRAY, (0, y0 + h - 1), (W, y0 + h - 1), 1)
 
     lvl = LEVELS.get(app.ear_level, LEVELS[1])
+    title = app.font_med.render("OÍDO · ESCUCHA Y REPITE", True, C_ACCENT)
+    app.screen.blit(title, (12, y0 + 8))
     lvl_t = app.font_small.render(
         f"Nivel {app.ear_level} · {lvl['title']}   (1/2/3 cambian)",
         True, C_GRAY)
-    app.screen.blit(lvl_t, (mx + mw // 2 - lvl_t.get_width() // 2, my + 52))
+    app.screen.blit(lvl_t, (12, y0 + 38))
 
     shown = app.ear_name if app.ear_revealed else "?"
     big = app.font_huge.render(shown, True, C_WHITE)
-    app.screen.blit(big, (mx + mw // 2 - big.get_width() // 2, my + 78))
-
+    app.screen.blit(big, (12, y0 + 66))
     sub = app.font_small.render(
         "Escucha la nota y tócala en el bajo" if not app.ear_revealed
         else "Sonando la siguiente…", True, C_GRAY)
-    app.screen.blit(sub, (mx + mw // 2 - sub.get_width() // 2, my + 162))
+    app.screen.blit(sub, (14, y0 + 152))
 
     with app.pitch_lock:
         det_note = app.stable_note
         det_hz   = app.stable_hz
-    oigo_col = C_BLUE if det_hz > MIN_HZ else C_GRAY
+    oigo_col = C_BLUE if det_hz > 0 else C_GRAY
     oigo = app.font_med.render(f"Oigo: {det_note}", True, oigo_col)
-    app.screen.blit(oigo, (mx + mw // 2 - oigo.get_width() // 2, my + 190))
+    app.screen.blit(oigo, (12, y0 + 182))
 
-    bw, bh = 340, 14
-    bx = mx + mw // 2 - bw // 2
-    by = my + 226
+    bw, bh = 300, 14
+    bx, by = 12, y0 + 220
     pygame.draw.rect(app.screen, C_DGRAY, (bx, by, bw, bh), border_radius=5)
     frac = min(1.0, app.ear_hold / max(0.01, app.tr_hold_need))
     if frac > 0 and not app.ear_revealed:
@@ -67,12 +62,20 @@ def draw_ear(app) -> None:
         sc = app.font_med.render(f"{ok}/{tot}  ({pct}%)", True, scol)
     else:
         sc = app.font_med.render("escucha y repite para empezar", True, C_GRAY)
-    app.screen.blit(sc, (mx + mw // 2 - sc.get_width() // 2, my + 250))
+    app.screen.blit(sc, (12, y0 + 244))
 
     if app.ear_msg:
         msg = app.font_small.render(app.ear_msg[:60], True, C_GRAY)
-        app.screen.blit(msg, (mx + mw // 2 - msg.get_width() // 2, my + 282))
+        app.screen.blit(msg, (12, y0 + 276))
 
-    hint = app.font_tiny.render(
+    hints = app.font_tiny.render(
         "SPACE=repetir · N=otra · 1/2/3 nivel · O salir", True, C_GRAY)
-    app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 24))
+    app.screen.blit(hints, (12, y0 + h - 22))
+
+    # ── Pentagrama (derecha): oculto hasta revelar ─────────────────
+    sx = W - STAFF_W - 16
+    sy = y0 + 30
+    disp = None
+    if app.ear_revealed and app.ear_midi is not None:
+        disp = app.ear_midi - 12
+    draw_mini_staff(app, sx, sy, STAFF_W, disp)

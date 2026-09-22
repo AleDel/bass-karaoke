@@ -1,9 +1,10 @@
 """
-Panel del Walking Lab (tecla G).
+Panel del Walking Lab (tecla G) — estilo base de los modos de estudio.
 
-Cubre la zona del tab con la info del ejercicio en bucle: compases,
-pulso de negras, nota esperada del tiempo actual y marcador por rol.
-El molde (círculos 1-4) se dibuja sobre el mástil en draw_neck.
+Ocupa la zona del tab (mástil y piano visibles): compases del bucle,
+pulso de negras, nota esperada del tiempo actual en letra y en
+pentagrama (clave de fa), y marcador por rol. El molde (círculos 1-4)
+se dibuja sobre el mástil en draw_neck.
 """
 import pygame
 
@@ -13,6 +14,9 @@ from ..config import (
     C_ACCENT, C_DGRAY, C_GRAY, C_WHITE, C_GREEN, C_RED,
     C_OK, C_ERR,
 )
+from .staff import draw_mini_staff
+
+STAFF_W = 200
 
 
 def draw_lab_panel(app) -> None:
@@ -28,7 +32,7 @@ def draw_lab_panel(app) -> None:
         f"WALKING LAB · {app.lab_title} · {app.lab_bpm:.0f} BPM", True, C_ACCENT)
     app.screen.blit(title, (12, y0 + 8))
     st = app.font_small.render(state, True, scol)
-    app.screen.blit(st, (W - st.get_width() - 12, y0 + 10))
+    app.screen.blit(st, (W - st.get_width() - STAFF_W - 28, y0 + 10))
 
     # ── Compases del bucle ──────────────────────────────────────────
     x = 12
@@ -66,10 +70,12 @@ def draw_lab_panel(app) -> None:
         app.screen.blit(n, (dot_x + b * 44 - n.get_width() // 2, cy + 6))
 
     # ── Nota esperada del tiempo actual ─────────────────────────────
+    staff_midi = None
     if app.lab_steps:
         bar = app.lab_bar % len(app.lab_steps)
         beat = app.lab_beat % 4
         stp = app.lab_steps[bar][beat]
+        staff_midi = stp["midi"]
         exp = app.font_big.render(
             f"T{beat + 1} {stp['role']} → {stp['name']}  "
             f"(tr.{stp['fret']} {STRING_NAMES[stp['string']]} · dedo {stp['finger']})",
@@ -80,7 +86,9 @@ def draw_lab_panel(app) -> None:
             msg = app.font_small.render(app.lab_last_msg[:70], True, mcol)
             app.screen.blit(msg, (12, y0 + 132))
 
-    # ── Marcador global + por rol ───────────────────────────────────
+    # ── Columna derecha: pentagrama + marcador ──────────────────────
+    sx = W - STAFF_W - 16
+    draw_mini_staff(app, sx, y0 + 34, STAFF_W, staff_midi)
     tot, ok = app.lab_total, app.lab_ok
     if tot > 0:
         pct = int(100 * ok / tot)
@@ -88,13 +96,13 @@ def draw_lab_panel(app) -> None:
         sc = app.font_med.render(f"{ok}/{tot} ({pct}%)", True, pcol)
     else:
         sc = app.font_med.render("—/—", True, C_GRAY)
-    app.screen.blit(sc, (W - sc.get_width() - 12, y0 + 92))
+    app.screen.blit(sc, (sx, y0 + 210))
     roles = []
     for i in range(4):
         t, o = app.lab_role_total[i], app.lab_role_ok[i]
         roles.append(f"T{i + 1} {o}/{t}")
     rl = app.font_tiny.render("   ".join(roles), True, C_GRAY)
-    app.screen.blit(rl, (W - rl.get_width() - 12, y0 + 126))
+    app.screen.blit(rl, (sx, y0 + 238))
 
     hints = app.font_tiny.render(
         "SPACE anda/para · N ejercicio · ↑/↓ tempo · G salir",
