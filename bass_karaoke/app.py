@@ -24,6 +24,7 @@ from .config import (
     MIN_HZ, MAX_HZ,
 )
 from .utils import fret_to_hz, hz_to_note_name, notes_match
+from .walking import EXERCISES, build_exercise, beat_matches, midi_of
 from .parser import parse_musicxml, parse_grace_notes
 from . import features
 features.ensure_on_path()
@@ -40,7 +41,8 @@ from .ui import (
     draw_note_panel, draw_metronome, draw_pitch_panel,
     draw_stats_panel, draw_bottom_bar,
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
-    draw_song_menu, draw_feature_menu, draw_help,
+    draw_song_menu, draw_feature_menu, draw_help, draw_training,
+    draw_lab_panel,
 )
 
 FPS = 60
@@ -50,6 +52,16 @@ FIGURE_NAMES = {
     "whole": "redonda", "half": "blanca", "quarter": "negra",
     "eighth": "corchea", "16th": "semicorchea", "32nd": "fusa",
     "64th": "semifusa",
+}
+
+# ── Entrenador de notas del mástil (E): niveles y notas objetivo ──────────
+_TR_PC = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5,
+          "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
+TR_LEVELS = {
+    1: {"title": "Cuerdas al aire", "notes": ["E", "A", "D", "G"]},
+    2: {"title": "Naturales",      "notes": ["C", "D", "E", "F", "G", "A", "B"]},
+    3: {"title": "Cromático",      "notes": ["C", "C#", "D", "D#", "E", "F",
+                                             "F#", "G", "G#", "A", "A#", "B"]},
 }
 
 
@@ -172,6 +184,40 @@ class BassKaraoke:
         self.preview_fret_str = None  # (fret, string) o None
         self.preview_midi     = None  # midi o None
         self._preview_sound   = None  # retener el Sound para que no lo libere el GC
+
+        # ── Entrenador de notas del mástil (E) ────────────────────
+        self.training_open = False
+        self.tr_level      = 1
+        self.tr_target_name = "—"
+        self.tr_target_midi = None
+        self.tr_target_hz   = 0.0
+        self.tr_hold        = 0.0   # tiempo con la nota correcta estable
+        self.tr_hold_need   = 0.6   # segundos para darla por válida
+        self.tr_ok          = 0
+        self.tr_total       = 0     # rondas resueltas (aciertos + saltadas)
+        self.tr_msg         = ""
+        self.tr_hint        = False  # ilumina la clase de tono en el piano
+
+        # ── Walking Lab: moldes Mayor/menor en bucle (G) ──────────
+        self.lab_open       = False
+        self.lab_running    = False
+        self.lab_idx        = 0
+        self.lab_title      = ""
+        self.lab_bars       = []     # nombres de compases del ejercicio
+        self.lab_steps      = []     # por compás: 4 dicts {role,string,fret,…}
+        self.lab_roots      = []     # midi de cada raíz (para el T4)
+        self.lab_bpm        = 80.0
+        self.lab_t          = 0.0
+        self.lab_last_total = -1
+        self.lab_beat       = 0
+        self.lab_bar        = 0
+        self.lab_heard      = False  # el tiempo actual ya se oyó bien
+        self.lab_ok         = 0
+        self.lab_total      = 0
+        self.lab_role_ok    = [0, 0, 0, 0]
+        self.lab_role_total = [0, 0, 0, 0]
+        self.lab_beat_res   = [None] * 4  # resultado del compás en curso
+        self.lab_last_msg   = ""
 
         # ── Editor de alineación MP3 (W) ──────────────────────────────
         self.align_editor_open = False
@@ -1222,6 +1268,106 @@ class BassKaraoke:
                           fret_str=fret_str, midi=int(midi))
 
     # ══════════════════════════════════════════════════════════════════
+    #  ENTRENADOR DE NOTAS DEL MÁSTIL (E)
+    # ══════════════════════════════════════════════════════════════════
+    def _training_open(self):
+        """Abre el entrenador; elige objetivo si aún no hay uno."""
+        self.training_open = True
+        self.tr_hold = 0.0
+        if self.tr_target_midi is None:
+            self._training_pick()
+
+    def _training_pick(self):
+        """Elige una nota objetivo del nivel actual (evita repetir la anterior)."""
+        import random as _rnd
+        pool = TR_LEVELS.get(self.tr_level, TR_LEVELS[1])["notes"]
+        choices = [n for n in pool if n != self.tr_target_name] or pool
+        name = _rnd.choice(choices)
+        self.tr_target_name = name
+        self.tr_target_midi = 60 + _TR_PC[name]
+        self.tr_target_hz   = self._midi_to_hz(self.tr_target_midi)
+        self.tr_hold        = 0.0
+
+    def _training_set_level(self, lvl: int):
+        if lvl in TR_LEVELS and lvl != self.tr_level:
+            self.tr_level = lvl
+            self.tr_msg   = ""
+            self._training_pick()
+
+    def _training_next(self, skipped: bool = True):
+        """Pasa a otra nota; si se salta, cuenta como ronda no acertada."""
+        if skipped and self.tr_target_midi is not None:
+            self.tr_total += 1
+            self.tr_msg = f"Saltada: era {self.tr_target_name}"
+        self._training_pick()
+
+    def _training_success(self):
+        self.tr_ok    += 1
+        self.tr_total += 1
+        self.tr_msg = f"¡Bien! {self.tr_target_name} correcto"
+        self._training_pick()
+
+    # ══════════════════════════════════════════════════════════════════
+    #  WALKING LAB — moldes Mayor/menor en bucle (G)
+    # ══════════════════════════════════════════════════════════════════
+    def _lab_open(self):
+        self.lab_open = True
+        if not self.lab_steps:
+            self._lab_load(self.lab_idx)
+
+    def _lab_load(self, idx: int):
+        idx = int(idx) % len(EXERCISES)
+        self.lab_idx   = idx
+        ex = EXERCISES[idx]
+        self.lab_title = ex["title"]
+        self.lab_bars  = [b["name"] for b in ex["bars"]]
+        self.lab_steps = build_exercise(ex)
+        self.lab_roots = [midi_of(b["string"], b["fret"]) for b in ex["bars"]]
+        self.lab_t          = 0.0
+        self.lab_last_total = -1
+        self.lab_beat       = 0
+        self.lab_bar        = 0
+        self.lab_heard      = False
+        self.lab_ok         = 0
+        self.lab_total      = 0
+        self.lab_role_ok    = [0, 0, 0, 0]
+        self.lab_role_total = [0, 0, 0, 0]
+        self.lab_beat_res   = [None] * 4
+        self.lab_last_msg   = ""
+
+    def _lab_toggle_run(self):
+        if not self.lab_steps:
+            self._lab_load(self.lab_idx)
+        self.lab_running = not self.lab_running
+        self.lab_t          = 0.0
+        self.lab_last_total = -1
+        self.lab_beat       = 0
+        self.lab_bar        = 0
+        self.lab_heard      = False
+        self.lab_beat_res   = [None] * 4
+
+    def _lab_tempo(self, delta: float):
+        self.lab_bpm = max(40.0, min(180.0, self.lab_bpm + delta))
+
+    def _lab_score_beat(self):
+        """Puntúa el tiempo recién terminado (según el latch lab_heard)."""
+        if not self.lab_steps:
+            return
+        bar  = self.lab_bar % len(self.lab_steps)
+        beat = self.lab_beat % 4
+        ok = bool(self.lab_heard)
+        self.lab_total += 1
+        self.lab_role_total[beat] += 1
+        if ok:
+            self.lab_ok += 1
+            self.lab_role_ok[beat] += 1
+        if beat < len(self.lab_beat_res):
+            self.lab_beat_res[beat] = ok
+        st = self.lab_steps[bar][beat]
+        self.lab_last_msg = (f"T{beat + 1} {st['role']} {st['name']} ✓" if ok
+                             else f"T{beat + 1} ✗ (toca {st['name']})")
+
+    # ══════════════════════════════════════════════════════════════════
     #  CONTROLES
     # ══════════════════════════════════════════════════════════════════
     def _measure_starts(self):
@@ -1421,6 +1567,40 @@ class BassKaraoke:
             _hz = self.stable_hz
         self.detected_fret_str = self._hz_to_fret_string(_hz) if _hz > 0 else None
 
+        # ── Entrenador: validar el objetivo con el micro (pausado o tocando) ──
+        if self.training_open and self.tr_target_midi is not None:
+            if (_hz > MIN_HZ and self.tr_target_hz > 0
+                    and notes_match(_hz, self.tr_target_hz)):
+                self.tr_hold += dt
+                if self.tr_hold >= self.tr_hold_need:
+                    self._training_success()
+            else:
+                self.tr_hold = max(0.0, self.tr_hold - dt * 2.0)
+
+        # ── Walking Lab: pulso de negras + escucha por tiempo ─────────
+        if self.lab_open and self.lab_running and self.lab_steps:
+            self.lab_t += dt
+            spb = 60.0 / max(20.0, self.lab_bpm)
+            total = int(self.lab_t // spb)
+            if total != self.lab_last_total:
+                if self.lab_last_total >= 0:
+                    self._lab_score_beat()
+                self.lab_last_total = total
+                new_bar = (total // 4) % len(self.lab_steps)
+                if new_bar != self.lab_bar:
+                    self.lab_bar = new_bar
+                    self.lab_beat_res = [None] * 4
+                self.lab_beat  = total % 4
+                self.lab_heard = False
+                self._play_click(self.lab_beat == 0, force=True)
+            else:
+                bar = self.lab_bar % len(self.lab_steps)
+                nxt = self.lab_roots[(bar + 1) % len(self.lab_roots)]
+                if (_hz > MIN_HZ
+                        and beat_matches(_hz, self.lab_steps[bar],
+                                         self.lab_beat % 4, nxt)):
+                    self.lab_heard = True
+
         if self.counting_down:
             self.countdown_timer += dt
             beat_sec = 60.0 / self.bpm
@@ -1522,6 +1702,10 @@ class BassKaraoke:
             draw_feature_menu(self)
         if self.tuner_open:
             draw_tuner(self)
+        if self.training_open:
+            draw_training(self)
+        if self.lab_open:
+            draw_lab_panel(self)
         if self.help_open:
             draw_help(self)
         if self.align_editor_open:
@@ -1786,6 +1970,38 @@ class BassKaraoke:
                     self.tuner_open = False
                 return True
 
+            # ── Entrenador de notas (E) ──────────────────────────────
+            if self.training_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_e):
+                    self.training_open = False
+                    self.tr_hint = False
+                elif event.key in (pygame.K_n, pygame.K_SPACE):
+                    self._training_next(skipped=True)
+                elif event.key == pygame.K_h:
+                    self.tr_hint = not self.tr_hint
+                elif event.key == pygame.K_1:
+                    self._training_set_level(1)
+                elif event.key == pygame.K_2:
+                    self._training_set_level(2)
+                elif event.key == pygame.K_3:
+                    self._training_set_level(3)
+                return True
+
+            # ── Walking Lab: moldes Mayor/menor (G) ──────────────────
+            if self.lab_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_g):
+                    self.lab_open    = False
+                    self.lab_running = False
+                elif event.key == pygame.K_SPACE:
+                    self._lab_toggle_run()
+                elif event.key == pygame.K_n:
+                    self._lab_load(self.lab_idx + 1)
+                elif event.key == pygame.K_UP:
+                    self._lab_tempo(+5)
+                elif event.key == pygame.K_DOWN:
+                    self._lab_tempo(-5)
+                return True
+
             # ── Ayuda (F1) ───────────────────────────────────────────────
             if self.help_open:
                 if event.key in (pygame.K_ESCAPE, pygame.K_F1):
@@ -1862,6 +2078,10 @@ class BassKaraoke:
                 self.song_menu_sel  = self.song_idx
             elif event.key == pygame.K_t:
                 self.tuner_open = not self.tuner_open
+            elif event.key == pygame.K_e:
+                self._training_open()
+            elif event.key == pygame.K_g:
+                self._lab_open()
             elif event.key == pygame.K_w:
                 if self.align_editor_open:
                     self._close_align_editor(True)
@@ -1914,7 +2134,8 @@ class BassKaraoke:
                 # ── Modo aprendizaje: pulsar mástil o piano ──────────
                 if not (self.device_menu_open or self.pitch_menu_open
                         or self.song_menu_open or self.feature_menu_open
-                        or self.tuner_open or self.help_open):
+                        or self.tuner_open or self.help_open
+                        or self.training_open or self.lab_open):
                     _midi = self._piano_hit(event.pos)
                     if _midi is not None:
                         self._preview_from_piano(_midi)
@@ -1927,7 +2148,11 @@ class BassKaraoke:
                 if (TAB_Y <= my < NECK_Y
                         and not self.device_menu_open
                         and not self.pitch_menu_open
+                        and not self.song_menu_open
+                        and not self.feature_menu_open
                         and not self.tuner_open
+                        and not self.training_open
+                        and not self.lab_open
                         and not self.help_open):
                     self._drag_seeking    = True
                     self._drag_start_beat = self.beat_time

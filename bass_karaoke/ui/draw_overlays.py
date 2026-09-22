@@ -384,6 +384,10 @@ def draw_help(app) -> None:
             ("C", "Countdown on/off"),
             ("Clic mástil/piano", "Oír y ver la nota (aprender notas)"),
         ]),
+        ("Entrenamiento", [
+            ("E", "Encuentra la nota (oído + mástil)"),
+            ("G", "Walking Lab (moldes Mayor/menor)"),
+        ]),
         ("Sistema", [
             ("I", "Funcionalidades opcionales"),
             ("F1 / ESC", "Cerrar esta ayuda"),

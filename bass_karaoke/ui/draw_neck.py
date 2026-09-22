@@ -164,7 +164,35 @@ def draw_neck(app) -> None:
         lbl_n2 = app.font_tiny.render("  H=Mapa", True, C_DGRAY)
         app.screen.blit(lbl_n2, (nx0 + 4 + lbl_n.get_width(), ny - 13))
 
-    # ── Modo aprendizaje: nota pulsada con el ratón (encima del mapa) ──
+    # ── Walking Lab: molde del compás actual (círculos 1-4) ──────────
+    if getattr(app, "lab_open", False) and getattr(app, "lab_steps", None):
+        bar = app.lab_bar % len(app.lab_steps)
+        res = getattr(app, "lab_beat_res", [None] * 4)
+        running = getattr(app, "lab_running", False)
+        for i, stp in enumerate(app.lab_steps[bar]):
+            xc = int(note_x(stp["fret"]))
+            yc = int(STR_Y.get(stp["string"], 0))
+            if xc > nx0 + nw - 4 or stp["string"] not in STR_Y:
+                continue
+            cur = running and (i == app.lab_beat % 4)
+            r = res[i] if i < len(res) else None
+            if cur:
+                col, rad, wdt = C_ACCENT, 13, 3
+            elif r is True:
+                col, rad, wdt = C_OK, 11, 2
+            elif r is False:
+                col, rad, wdt = C_ERR, 11, 2
+            else:
+                col, rad, wdt = C_GRAY, 10, 2
+            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), rad)
+            pygame.draw.circle(app.screen, col, (xc, yc), rad, wdt)
+            num = app.font_small.render(str(i + 1), True, col)
+            app.screen.blit(num, (xc - num.get_width() // 2,
+                                   yc - num.get_height() // 2))
+            if cur:
+                nm = app.font_tiny.render(stp["name"], True, C_ACCENT)
+                app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 28))
+    # ── Modo aprendizaje: nota pulsada con el ratón (encima de todo) ──
     prev = getattr(app, "preview_fret_str", None)
     if prev and getattr(app, "preview_timer", 0) > 0:
         pf, ps = prev

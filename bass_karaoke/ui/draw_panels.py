@@ -215,7 +215,8 @@ def draw_bottom_bar(app) -> None:
     hints = [
         ("SPC", "Play"), ("R", "Reinicio"), ("←/→", "Compás"),
         ("↑/↓", "Tempo"), ("L", "Canciones"), ("W", "Alinear"),
-        ("F5", "Guardar"), ("ESC", "Salir"), ("F1", "Ayuda"),
+        ("E", "Notas"), ("G", "Walking"),
+        ("ESC", "Salir"), ("F1", "Ayuda"),
     ]
     x = 8
     row_y = BOTTOM_Y + 16
