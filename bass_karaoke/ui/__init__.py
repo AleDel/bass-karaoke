@@ -14,6 +14,8 @@ from .draw_overlays import (
 )
 from .draw_training import draw_training
 from .draw_lab import draw_lab_panel
+from .draw_ear import draw_ear
+from .draw_seq import draw_tech, draw_arp, draw_scale
 
 __all__ = [
     "build_piano_keys",
@@ -22,5 +24,6 @@ __all__ = [
     "draw_stats_panel", "draw_bottom_bar",
     "draw_tuner", "draw_countdown", "draw_device_menu", "draw_pitch_menu",
     "draw_song_menu", "draw_feature_menu", "draw_help",
-    "draw_training", "draw_lab_panel",
+    "draw_training", "draw_lab_panel", "draw_ear",
+    "draw_tech", "draw_arp", "draw_scale",
 ]

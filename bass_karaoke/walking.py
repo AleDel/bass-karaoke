@@ -12,12 +12,9 @@ el mástil al cambiar de tonalidad. Los dedos son sugeridos, con el
 """
 import math
 
-# MIDI de las cuerdas al aire (E1=28, A1=33, D2=38, G2=43)
-OPEN_MIDI = {4: 28, 3: 33, 2: 38, 1: 43}
-STRING_NAMES = {4: "E", 3: "A", 2: "D", 1: "G"}
-NAMES = ["C", "C#", "D", "D#", "E", "F",
-         "F#", "G", "G#", "A", "A#", "B"]
-MAX_FRET = 15
+from .music import (
+    OPEN_MIDI, MAX_FRET, midi_to_hz, midi_name, midi_of, pc_of_hz, tone_pos,
+)
 
 # Semitonos de la 3ª según la cualidad del acorde
 THIRDS = {"maj": 4, "6": 4, "dom": 4, "7": 4, "min": 3, "m7": 3, "m": 3}
@@ -25,43 +22,8 @@ THIRDS = {"maj": 4, "6": 4, "dom": 4, "7": 4, "min": 3, "m7": 3, "m": 3}
 # Dedo ancla sobre la raíz (sugerido)
 ROOT_FINGER = {"maj": 2, "6": 2, "dom": 2, "7": 2, "min": 1, "m7": 1, "m": 1}
 
-
-def midi_to_hz(midi: int) -> float:
-    return 440.0 * (2 ** ((int(midi) - 69) / 12.0))
-
-
-def midi_name(midi: int) -> str:
-    midi = int(midi)
-    return f"{NAMES[midi % 12]}{(midi // 12) - 1}"
-
-
-def midi_of(string: int, fret: int) -> int:
-    return OPEN_MIDI[string] + int(fret)
-
-
-def _in_range(string: int, fret: int) -> bool:
-    return 1 <= string <= 4 and 0 <= fret <= MAX_FRET
-
-
-def _chord_tone_pos(string: int, fret: int, interval: int):
-    """Posición (cuerda, traste) para un intervalo sobre la raíz.
-
-    Orden: cuerda adyacente aguda (molde estándar) → misma cuerda →
-    cuerda adyacente grave → cualquier posición con ese tono.
-    """
-    target = midi_of(string, fret) + interval
-    ordered = [(string - 1, fret + interval - 5),
-               (string, fret + interval),
-               (string + 1, fret + interval + 5)]
-    for s, f in ordered:
-        if _in_range(s, f) and midi_of(s, f) == target:
-            return (s, f)
-    for s in (string - 1, string, string + 1, 4, 3, 2, 1):
-        if 1 <= s <= 4:
-            f = target - OPEN_MIDI[s]
-            if 0 <= f <= MAX_FRET:
-                return (s, f)
-    return (string, fret)  # último recurso (no debería pasar)
+# Compatibilidad: estos nombres siguen importables desde aquí
+_chord_tone_pos = tone_pos
 
 
 def _approach_pos(next_root_midi: int, ref):
@@ -121,7 +83,7 @@ def beat_matches(hz: float, bar_steps, beat: int, next_root_midi: int) -> bool:
     """
     if hz <= 0:
         return False
-    pc_det = int(round(12 * math.log2(hz / 440.0) + 69)) % 12
+    pc_det = pc_of_hz(hz)
     if beat < 3:
         return pc_det == (bar_steps[beat]["midi"] % 12)
     pc_next = int(next_root_midi) % 12

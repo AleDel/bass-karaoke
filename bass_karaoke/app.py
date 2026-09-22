@@ -42,7 +42,7 @@ from .ui import (
     draw_stats_panel, draw_bottom_bar,
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
     draw_song_menu, draw_feature_menu, draw_help, draw_training,
-    draw_lab_panel,
+    draw_lab_panel, draw_ear, draw_tech, draw_arp, draw_scale,
 )
 
 FPS = 60
@@ -54,15 +54,14 @@ FIGURE_NAMES = {
     "64th": "semifusa",
 }
 
-# ── Entrenador de notas del mástil (E): niveles y notas objetivo ──────────
-_TR_PC = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5,
-          "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
-TR_LEVELS = {
-    1: {"title": "Cuerdas al aire", "notes": ["E", "A", "D", "G"]},
-    2: {"title": "Naturales",      "notes": ["C", "D", "E", "F", "G", "A", "B"]},
-    3: {"title": "Cromático",      "notes": ["C", "C#", "D", "D#", "E", "F",
-                                             "F#", "G", "G#", "A", "A#", "B"]},
-}
+# ── Lógica de entrenamiento (pura, portable a C++/Flutter) ─────────────
+# music.py = teoría · walking.py = moldes · training.py = juego de notas ·
+# technique.py / arpeggios.py / scales.py = secuencias.
+# app.py solo pone UI + micro + sonido; nunca teoría musical.
+from . import training as training_logic
+from . import technique as tech_logic
+from . import arpeggios as arp_logic
+from . import scales as scale_logic
 
 
 def _fmt_tempo(tmap, scaled_by=1.0, mode="bpm"):
@@ -218,6 +217,43 @@ class BassKaraoke:
         self.lab_role_total = [0, 0, 0, 0]
         self.lab_beat_res   = [None] * 4  # resultado del compás en curso
         self.lab_last_msg   = ""
+
+        # ── Oído call-response: escucha y repite (O) ───────────
+        self.ear_open     = False
+        self.ear_level    = 1
+        self.ear_name     = "—"
+        self.ear_midi     = None
+        self.ear_hz       = 0.0
+        self.ear_hold     = 0.0
+        self.ear_revealed = False  # True = respuesta mostrada, esperando cambio
+        self.ear_wait     = 0.0
+        self.ear_ok       = 0
+        self.ear_total    = 0
+        self.ear_msg      = ""
+        self._ear_sound   = None
+
+        # ── Secuencias paso a paso: técnica (X), arpegios (A), escalas (V)
+        self.tx_open = False
+        self.tx_sel  = 1      # 1 cromático · 2 cruce
+        self.tx_pos  = 5      # traste de inicio
+        self.ar_open = False
+        self.ar_sel  = 2      # 1 maj7 · 2 min7 · 3 dom7
+        self.ar_pos  = 5      # traste de la tónica (cuerda A)
+        self.sc_open = False
+        self.sc_sel  = 1      # 1 mayor · 2 menor · 3 pentatónica
+        self.sc_pos  = 3      # traste de la tónica (cuerda A)
+        for _p in ("tx", "ar", "sc"):
+            setattr(self, f"{_p}_steps", [])
+            setattr(self, f"{_p}_step", 0)
+            setattr(self, f"{_p}_hold", 0.0)
+            setattr(self, f"{_p}_ok", 0)
+            setattr(self, f"{_p}_total", 0)
+            setattr(self, f"{_p}_loops", 0)
+            setattr(self, f"{_p}_msg", "")
+        # Objetivo visible en el mástil (lo pone el modo secuencia activo)
+        self.seq_pos   = None  # (fret, string)
+        self.seq_midi  = None
+        self.seq_label = ""
 
         # ── Editor de alineación MP3 (W) ──────────────────────────────
         self.align_editor_open = False
@@ -1279,17 +1315,15 @@ class BassKaraoke:
 
     def _training_pick(self):
         """Elige una nota objetivo del nivel actual (evita repetir la anterior)."""
-        import random as _rnd
-        pool = TR_LEVELS.get(self.tr_level, TR_LEVELS[1])["notes"]
-        choices = [n for n in pool if n != self.tr_target_name] or pool
-        name = _rnd.choice(choices)
+        name = training_logic.pick_target(self.tr_level,
+                                          exclude=self.tr_target_name)
         self.tr_target_name = name
-        self.tr_target_midi = 60 + _TR_PC[name]
+        self.tr_target_midi = training_logic.target_midi(name)
         self.tr_target_hz   = self._midi_to_hz(self.tr_target_midi)
         self.tr_hold        = 0.0
 
     def _training_set_level(self, lvl: int):
-        if lvl in TR_LEVELS and lvl != self.tr_level:
+        if lvl in training_logic.LEVELS and lvl != self.tr_level:
             self.tr_level = lvl
             self.tr_msg   = ""
             self._training_pick()
@@ -1366,6 +1400,129 @@ class BassKaraoke:
         st = self.lab_steps[bar][beat]
         self.lab_last_msg = (f"T{beat + 1} {st['role']} {st['name']} ✓" if ok
                              else f"T{beat + 1} ✗ (toca {st['name']})")
+
+    # ══════════════════════════════════════════════════════════════════
+    #  OÍDO CALL-RESPONSE — escucha y repite (O)
+    # ══════════════════════════════════════════════════════════════════
+    def _ear_open(self):
+        """Abre el modo oído; suena el objetivo (oculto) al entrar."""
+        self.ear_open = True
+        self.ear_hold = 0.0
+        if self.ear_midi is None:
+            self._ear_pick()
+        else:
+            self._ear_play()
+
+    def _ear_pick(self):
+        """Nuevo objetivo oculto: lo elige, lo esconde y lo hace sonar."""
+        name = training_logic.pick_target(self.ear_level,
+                                          exclude=self.ear_name)
+        self.ear_name     = name
+        self.ear_midi     = training_logic.target_midi(name)
+        self.ear_hz       = self._midi_to_hz(self.ear_midi)
+        self.ear_hold     = 0.0
+        self.ear_revealed = False
+        self.ear_wait     = 0.0
+        self.ear_msg      = ""
+        self._ear_play()
+
+    def _ear_play(self):
+        """Repite el sonido del objetivo sin mostrar su nombre."""
+        try:
+            if self.ear_hz > 0:
+                self._ear_sound = self._build_tone(self.ear_hz)
+                self._ear_sound.play()
+        except Exception as e:
+            print(f"[Oído] no puedo sonar: {e}")
+
+    def _ear_set_level(self, lvl: int):
+        if lvl in training_logic.LEVELS and lvl != self.ear_level:
+            self.ear_level = lvl
+            self._ear_pick()
+
+    def _ear_resolve(self, success: bool):
+        """Revela la respuesta y programa el siguiente objetivo."""
+        self.ear_revealed = True
+        self.ear_wait     = 1.6
+        self.ear_total   += 1
+        if success:
+            self.ear_ok += 1
+            self.ear_msg = f"¡Bien! Era {self.ear_name}"
+        else:
+            self.ear_msg = f"Era {self.ear_name}"
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SECUENCIAS PASO A PASO — técnica (X), arpegios (A), escalas (V)
+    # ══════════════════════════════════════════════════════════════════
+    def _close_modes(self):
+        """Cierra todos los modos de entrenamiento (solo uno a la vez)."""
+        self.training_open = False
+        self.tr_hint       = False
+        self.lab_open      = False
+        self.lab_running   = False
+        self.ear_open      = False
+        self.tx_open = self.ar_open = self.sc_open = False
+        self.seq_pos, self.seq_midi, self.seq_label = None, None, ""
+
+    def _seq_show(self, p: str):
+        """Publica el paso actual como objetivo visible en el mástil."""
+        steps = getattr(self, f"{p}_steps")
+        i = getattr(self, f"{p}_step", 0) % max(1, len(steps))
+        st = steps[i]
+        self.seq_pos   = (st["fret"], st["string"])
+        self.seq_midi  = st["midi"]
+        self.seq_label = f"{i + 1}/{len(steps)}"
+
+    def _seq_rebuild(self, p: str):
+        builders = {"tx": lambda: tech_logic.build_pattern(self.tx_sel, self.tx_pos),
+                    "ar": lambda: arp_logic.build_arpeggio(self.ar_sel, self.ar_pos),
+                    "sc": lambda: scale_logic.build_scale(self.sc_sel, self.sc_pos)}
+        setattr(self, f"{p}_steps", builders[p]())
+        setattr(self, f"{p}_step", 0)
+        setattr(self, f"{p}_hold", 0.0)
+        setattr(self, f"{p}_msg", "")
+        self._seq_show(p)
+
+    def _seq_open(self, p: str):
+        self._close_modes()
+        setattr(self, f"{p}_open", True)
+        if not getattr(self, f"{p}_steps"):
+            self._seq_rebuild(p)
+        else:
+            self._seq_show(p)
+
+    def _seq_advance(self, p: str):
+        """Puntúa el paso actual y avanza (al final, vuelta completa)."""
+        steps = getattr(self, f"{p}_steps")
+        i = getattr(self, f"{p}_step", 0)
+        setattr(self, f"{p}_ok", getattr(self, f"{p}_ok") + 1)
+        setattr(self, f"{p}_total", getattr(self, f"{p}_total") + 1)
+        setattr(self, f"{p}_hold", 0.0)
+        if i + 1 >= len(steps):
+            setattr(self, f"{p}_step", 0)
+            setattr(self, f"{p}_loops", getattr(self, f"{p}_loops") + 1)
+            setattr(self, f"{p}_msg", "¡Vuelta completa!")
+        else:
+            setattr(self, f"{p}_step", i + 1)
+            setattr(self, f"{p}_msg", "")
+        self._seq_show(p)
+
+    def _seq_listen(self, p: str, hz: float, dt: float):
+        matchers = {"tx": tech_logic.step_matches,
+                    "ar": arp_logic.step_matches,
+                    "sc": scale_logic.step_matches}
+        steps = getattr(self, f"{p}_steps")
+        if not steps:
+            return
+        st = steps[getattr(self, f"{p}_step", 0) % len(steps)]
+        if hz > MIN_HZ and matchers[p](hz, st):
+            hold = getattr(self, f"{p}_hold") + dt
+            setattr(self, f"{p}_hold", hold)
+            if hold >= self.tr_hold_need:
+                self._seq_advance(p)
+        else:
+            setattr(self, f"{p}_hold",
+                    max(0.0, getattr(self, f"{p}_hold") - dt * 2.0))
 
     # ══════════════════════════════════════════════════════════════════
     #  CONTROLES
@@ -1601,6 +1758,28 @@ class BassKaraoke:
                                          self.lab_beat % 4, nxt)):
                     self.lab_heard = True
 
+        # ── Oído: escucha oculta, repite con el bajo ──────────────────
+        if self.ear_open and self.ear_midi is not None:
+            if self.ear_revealed:
+                self.ear_wait -= dt
+                if self.ear_wait <= 0:
+                    self._ear_pick()
+            elif (_hz > MIN_HZ and self.ear_hz > 0
+                    and notes_match(_hz, self.ear_hz)):
+                self.ear_hold += dt
+                if self.ear_hold >= self.tr_hold_need:
+                    self._ear_resolve(True)
+            else:
+                self.ear_hold = max(0.0, self.ear_hold - dt * 2.0)
+
+        # ── Secuencias: avanza al clavar cada paso con el micro ──────
+        if self.tx_open:
+            self._seq_listen("tx", _hz, dt)
+        if self.ar_open:
+            self._seq_listen("ar", _hz, dt)
+        if self.sc_open:
+            self._seq_listen("sc", _hz, dt)
+
         if self.counting_down:
             self.countdown_timer += dt
             beat_sec = 60.0 / self.bpm
@@ -1706,6 +1885,14 @@ class BassKaraoke:
             draw_training(self)
         if self.lab_open:
             draw_lab_panel(self)
+        if self.ear_open:
+            draw_ear(self)
+        if self.tx_open:
+            draw_tech(self)
+        if self.ar_open:
+            draw_arp(self)
+        if self.sc_open:
+            draw_scale(self)
         if self.help_open:
             draw_help(self)
         if self.align_editor_open:
@@ -2002,6 +2189,87 @@ class BassKaraoke:
                     self._lab_tempo(-5)
                 return True
 
+            # ── Oído call-response (O) ───────────────────────────────
+            if self.ear_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_o):
+                    self.ear_open = False
+                elif event.key == pygame.K_SPACE:
+                    self._ear_play()
+                elif event.key == pygame.K_n:
+                    self._ear_resolve(False)
+                elif event.key == pygame.K_1:
+                    self._ear_set_level(1)
+                elif event.key == pygame.K_2:
+                    self._ear_set_level(2)
+                elif event.key == pygame.K_3:
+                    self._ear_set_level(3)
+                return True
+
+            # ── Técnica / dedos (X) ────────────────────────────────
+            if self.tx_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_x):
+                    self._close_modes()
+                elif event.key == pygame.K_n:
+                    self.tx_step = 0
+                    self.tx_hold = 0.0
+                    self.tx_msg  = ""
+                    self._seq_show("tx")
+                elif event.key == pygame.K_1:
+                    self.tx_sel = 1
+                    self._seq_rebuild("tx")
+                elif event.key == pygame.K_2:
+                    self.tx_sel = 2
+                    self._seq_rebuild("tx")
+                elif event.key == pygame.K_UP:
+                    self.tx_pos = min(12, self.tx_pos + 1)
+                    self._seq_rebuild("tx")
+                elif event.key == pygame.K_DOWN:
+                    self.tx_pos = max(0, self.tx_pos - 1)
+                    self._seq_rebuild("tx")
+                return True
+
+            # ── Arpegios (A) ───────────────────────────────────────
+            if self.ar_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_a):
+                    self._close_modes()
+                elif event.key == pygame.K_n:
+                    self.ar_step = 0
+                    self.ar_hold = 0.0
+                    self.ar_msg  = ""
+                    self._seq_show("ar")
+                elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
+                    self.ar_sel = {pygame.K_1: 1, pygame.K_2: 2,
+                                   pygame.K_3: 3}[event.key]
+                    self._seq_rebuild("ar")
+                elif event.key == pygame.K_UP:
+                    self.ar_pos = min(12, self.ar_pos + 1)
+                    self._seq_rebuild("ar")
+                elif event.key == pygame.K_DOWN:
+                    self.ar_pos = max(0, self.ar_pos - 1)
+                    self._seq_rebuild("ar")
+                return True
+
+            # ── Escalas (V) ────────────────────────────────────────
+            if self.sc_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_v):
+                    self._close_modes()
+                elif event.key == pygame.K_n:
+                    self.sc_step = 0
+                    self.sc_hold = 0.0
+                    self.sc_msg  = ""
+                    self._seq_show("sc")
+                elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
+                    self.sc_sel = {pygame.K_1: 1, pygame.K_2: 2,
+                                   pygame.K_3: 3}[event.key]
+                    self._seq_rebuild("sc")
+                elif event.key == pygame.K_UP:
+                    self.sc_pos = min(12, self.sc_pos + 1)
+                    self._seq_rebuild("sc")
+                elif event.key == pygame.K_DOWN:
+                    self.sc_pos = max(0, self.sc_pos - 1)
+                    self._seq_rebuild("sc")
+                return True
+
             # ── Ayuda (F1) ───────────────────────────────────────────────
             if self.help_open:
                 if event.key in (pygame.K_ESCAPE, pygame.K_F1):
@@ -2082,6 +2350,14 @@ class BassKaraoke:
                 self._training_open()
             elif event.key == pygame.K_g:
                 self._lab_open()
+            elif event.key == pygame.K_o:
+                self._ear_open()
+            elif event.key == pygame.K_x:
+                self._seq_open("tx")
+            elif event.key == pygame.K_a:
+                self._seq_open("ar")
+            elif event.key == pygame.K_v:
+                self._seq_open("sc")
             elif event.key == pygame.K_w:
                 if self.align_editor_open:
                     self._close_align_editor(True)
@@ -2135,7 +2411,8 @@ class BassKaraoke:
                 if not (self.device_menu_open or self.pitch_menu_open
                         or self.song_menu_open or self.feature_menu_open
                         or self.tuner_open or self.help_open
-                        or self.training_open or self.lab_open):
+                        or self.training_open or self.lab_open
+                        or self.ear_open):
                     _midi = self._piano_hit(event.pos)
                     if _midi is not None:
                         self._preview_from_piano(_midi)
@@ -2153,6 +2430,7 @@ class BassKaraoke:
                         and not self.tuner_open
                         and not self.training_open
                         and not self.lab_open
+                        and not self.ear_open
                         and not self.help_open):
                     self._drag_seeking    = True
                     self._drag_start_beat = self.beat_time

@@ -8,7 +8,7 @@ from ..config import (
     NECK_Y, NECK_H, NECK_W, NECK_AREA_X, NECK_AREA_W, NECK_NUT_X, NECK_LABEL_W,
     NECK_FRETS, NECK_DOT_FRETS, NECK_OCT_FRETS,
     STRING_NAMES, STRING_COLORS, STRING_THICK,
-    C_BG, C_DGRAY, C_GRAY, C_BLUE, C_OK, C_ERR, C_WAIT,
+    C_BG, C_DGRAY, C_GRAY, C_BLUE, C_OK, C_ERR, C_WAIT, C_WHITE,
     C_WOOD, C_WOOD2, C_NUT, C_FRET, C_DOT, C_ACCENT,
     MIN_HZ,
 )
@@ -192,6 +192,18 @@ def draw_neck(app) -> None:
             if cur:
                 nm = app.font_tiny.render(stp["name"], True, C_ACCENT)
                 app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 28))
+    # ── Secuencias (X/A/V): objetivo actual en el mástil ──────────────
+    sp = getattr(app, "seq_pos", None)
+    if sp:
+        xc = int(note_x(sp[0]))
+        yc = int(STR_Y.get(sp[1], 0))
+        if xc <= nx0 + nw - 4 and sp[1] in STR_Y:
+            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), 12)
+            pygame.draw.circle(app.screen, C_WHITE, (xc, yc), 12, 2)
+            lb = app.font_tiny.render(getattr(app, "seq_label", ""),
+                                      True, C_WHITE)
+            app.screen.blit(lb, (xc - lb.get_width() // 2, yc - 28))
+
     # ── Modo aprendizaje: nota pulsada con el ratón (encima de todo) ──
     prev = getattr(app, "preview_fret_str", None)
     if prev and getattr(app, "preview_timer", 0) > 0:
