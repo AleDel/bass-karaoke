@@ -9,11 +9,21 @@
 Uso: python build_song.py   (desde la carpeta de la canción)
 """
 import os
+import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 
 import mido
 import numpy as np
+import soundfile as sf
+
+
+def _ffmpeg():
+    for cand in (r"C:\ffmpeg-2026-03-30-git-e54e117998-full_build\bin\ffmpeg.exe",
+                 shutil.which("ffmpeg")):
+        if cand and os.path.exists(cand):
+            return cand
+    return "ffmpeg"
 
 BASE = "ayer_hable_con_dios"
 MIDI_PATH = os.path.join("work", "htdemucs-bass_basic_pitch.mid")
@@ -84,6 +94,27 @@ def fit_grid(onsets):
     return best  # (score, bpm, phase)
 
 
+def fix_octave_jumps(notes):
+    """Corrige flips de octava típicos de la transcripción: si el salto
+    con la nota anterior supera la octava, prueba ±12 y se queda con el
+    salto mínimo cuando este queda en séptima o menos. Devuelve
+    (notas, correcciones)."""
+    fixed = []
+    prev = None
+    n_fix = 0
+    for start, end, midi in notes:
+        if prev is not None and abs(midi - prev) > 12:
+            cands = [(abs(midi - 12 - prev), midi - 12),
+                     (abs(midi + 12 - prev), midi + 12)]
+            cands.sort()
+            if cands[0][0] <= 7:
+                midi = cands[0][1]
+                n_fix += 1
+        fixed.append((start, end, midi))
+        prev = midi
+    return fixed, n_fix
+
+
 def tab_for_midi(midi):
     for string in (1, 2, 3, 4):
         fret = midi - OPEN_MIDI[string]
@@ -93,11 +124,31 @@ def tab_for_midi(midi):
 
 
 def build_musicxml(notes_q, bpm):
-    """notes_q: [(start16, dur16, midi)] → MusicXML con tab (divisions=4)."""
-    part_measures = {}
-    for start16, dur16, midi in notes_q:
+    """notes_q: [(start16, dur16, midi)] → MusicXML con tab (divisions=4).
+
+    Cada compás suma EXACTAMENTE 16: las notas se recortan al compás y
+    a la siguiente nota, y los huecos se rellenan con silencios.
+    """
+    n_measures = (max(s for s, _, _ in notes_q) // 16 + 1) if notes_q else 1
+    by_measure = {}
+    for start16, dur16, midi in sorted(notes_q):
         m = start16 // 16
-        part_measures.setdefault(m, []).append((start16, dur16, midi))
+        # Recorta al final del compás (sin ligaduras: se rearticula)
+        dur16 = max(1, min(dur16, (m + 1) * 16 - start16))
+        by_measure.setdefault(m, []).append([start16, dur16, midi])
+    # Sin solapes dentro del compás: recorta al inicio de la siguiente
+    # y elimina las totalmente tapadas.
+    for m, evs in by_measure.items():
+        evs.sort()
+        kept = []
+        for s, d, mid in evs:
+            if kept and s <= kept[-1][0]:
+                continue  # tapada por completo: fuera
+            if kept:
+                ps, pd, pm = kept[-1]
+                kept[-1][1] = max(1, min(pd, s - ps))
+            kept.append([s, d, mid])
+        by_measure[m] = kept
 
     root = ET.Element("score-partwise", version="3.1")
     pl = ET.SubElement(root, "part-list")
@@ -105,7 +156,6 @@ def build_musicxml(notes_q, bpm):
     ET.SubElement(sp, "part-name").text = "Bass"
     part = ET.SubElement(root, "part", id="P1")
 
-    n_measures = (max(part_measures) + 1) if part_measures else 1
     for m in range(n_measures):
         meas = ET.SubElement(part, "measure", number=str(m + 1))
         attr = ET.SubElement(meas, "attributes")
@@ -123,45 +173,71 @@ def build_musicxml(notes_q, bpm):
             ET.SubElement(metro, "per-minute").text = f"{bpm:.1f}"
             ET.SubElement(direction, "sound", tempo=f"{bpm:.1f}")
         pos = m * 16
-        for start16, dur16, midi in sorted(part_measures.get(m, [])):
+        for start16, dur16, midi in sorted(by_measure.get(m, [])):
             if start16 > pos:
-                rest = ET.SubElement(meas, "note")
-                ET.SubElement(rest, "rest")
-                ET.SubElement(rest, "duration").text = str(start16 - pos)
-                ET.SubElement(rest, "staff").text = "2"
+                _add_rest(meas, start16 - pos)
                 pos = start16
-            note = ET.SubElement(meas, "note")
-            pitch = ET.SubElement(note, "pitch")
-            step_letter, alter = PC_STEP_ALTER[midi % 12]
-            ET.SubElement(pitch, "step").text = step_letter
-            if alter:
-                ET.SubElement(pitch, "alter").text = str(alter)
-            ET.SubElement(pitch, "octave").text = str(midi // 12 - 1)
-            ET.SubElement(note, "duration").text = str(dur16)
-            ET.SubElement(note, "staff").text = "2"
-            ET.SubElement(note, "type").text = (
-                "16th" if dur16 == 1 else
-                "eighth" if dur16 == 2 else "quarter")
-            tech = ET.SubElement(ET.SubElement(note, "notations"),
-                                 "technical")
-            tab = tab_for_midi(midi)
-            ET.SubElement(tech, "string").text = str(tab[1])
-            ET.SubElement(tech, "fret").text = str(tab[0])
+            _add_note(meas, dur16, midi)
             pos = start16 + dur16
         if pos < (m + 1) * 16:
-            rest = ET.SubElement(meas, "note")
-            ET.SubElement(rest, "rest")
-            ET.SubElement(rest, "duration").text = str((m + 1) * 16 - pos)
-            ET.SubElement(rest, "staff").text = "2"
+            _add_rest(meas, (m + 1) * 16 - pos)
 
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     return tree
 
 
+def _add_rest(meas, dur16):
+    rest = ET.SubElement(meas, "note")
+    ET.SubElement(rest, "rest")
+    ET.SubElement(rest, "duration").text = str(dur16)
+    ET.SubElement(rest, "staff").text = "2"
+
+
+def _add_note(meas, dur16, midi):
+    note = ET.SubElement(meas, "note")
+    pitch = ET.SubElement(note, "pitch")
+    step_letter, alter = PC_STEP_ALTER[midi % 12]
+    ET.SubElement(pitch, "step").text = step_letter
+    if alter:
+        ET.SubElement(pitch, "alter").text = str(alter)
+    ET.SubElement(pitch, "octave").text = str(midi // 12 - 1)
+    ET.SubElement(note, "duration").text = str(dur16)
+    ET.SubElement(note, "staff").text = "2"
+    ET.SubElement(note, "type").text = (
+        "16th" if dur16 == 1 else
+        "eighth" if dur16 == 2 else "quarter")
+    tech = ET.SubElement(ET.SubElement(note, "notations"),
+                         "technical")
+    tab = tab_for_midi(midi)
+    ET.SubElement(tech, "string").text = str(tab[1])
+    ET.SubElement(tech, "fret").text = str(tab[0])
+
+
+def _validate_measures(xml_path):
+    """Validador independiente: cada compás debe sumar 16 (divisions=4).
+    Replica la regla quejaba el editor (21/16, 9/8, ...). Falla si no."""
+    root = ET.parse(xml_path).getroot()
+    bad = []
+    for part in root.iter("part"):
+        for meas in part.findall("measure"):
+            total = 0
+            for note in meas.findall("note"):
+                d = note.find("duration")
+                total += int(d.text) if d is not None else 0
+            if total != 16:
+                bad.append((meas.get("number"), total))
+    if bad:
+        raise SystemExit(f"COMPASES MAL: {bad[:10]} (total {len(bad)})")
+    n = sum(1 for _ in root.iter("measure"))
+    print(f"validador: {n} compases × 16 OK")
+
+
 def main():
     notes = load_note_events()
     print(f"notas MIDI: {len(notes)}")
+    notes, n_fix = fix_octave_jumps(notes)
+    print(f"flips de octava corregidos: {n_fix}")
     onsets = [s for s, _, _ in notes]
     score, bpm, phase = fit_grid(onsets)
     bpm = round(float(bpm), 1)
@@ -193,18 +269,28 @@ def main():
     tree.write(xml_path, encoding="unicode",
                xml_declaration=True)
     print("MusicXML:", xml_path)
+    _validate_measures(xml_path)
 
-    # Mezcla sin bajo → MP3
-    inputs = []
+    # Mezcla sin bajo → WAV (numpy) → MP3 (ffmpeg solo transcodifica,
+    # así vale cualquier ffmpeg con libmp3lame, sin filtros modernos)
+    mix = None
+    sr = None
+    tracks = []
     for s in STEMS_NOBASS:
-        inputs += ["-i", s]
+        y, sr = sf.read(s, dtype="float32", always_2d=True)
+        tracks.append(y)
+    n = min(len(t) for t in tracks)
+    mix = sum(t[:n] for t in tracks)
+    peak = float(np.abs(mix).max())
+    if peak > 0:
+        mix = mix / peak * 0.95
+    tmp_wav = "_nobass_mix.wav"
+    sf.write(tmp_wav, mix, sr, subtype="PCM_16")
     mp3_path = f"{BASE}.mp3"
-    cmd = (["ffmpeg", "-y"]
-           + inputs +
-           ["-filter_complex", "[0:a][1:a][2:a]amix=inputs=3:normalize=0,"
-                               "alimiter=limit=0.95",
-            "-codec:a", "libmp3lame", "-q:a", "3", mp3_path])
-    subprocess.run(cmd, check=True, capture_output=True)
+    subprocess.run([_ffmpeg(), "-y", "-i", tmp_wav,
+                    "-codec:a", "libmp3lame", "-q:a", "3", mp3_path],
+                   check=True, capture_output=True)
+    os.remove(tmp_wav)
     print("MP3:", mp3_path)
 
 
