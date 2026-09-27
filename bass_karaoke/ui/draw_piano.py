@@ -49,6 +49,16 @@ def draw_piano(app) -> None:
         except Exception:
             lab_pc = None
 
+    # Corridos: clase de tono del tiempo actual (si suena)
+    cor_pc = None
+    if getattr(app, "cor_open", False) and getattr(app, "cor_steps", None):
+        try:
+            bar = app.cor_bar % len(app.cor_steps)
+            _m = app.cor_steps[bar][app.cor_beat % 3].get("midi")
+            cor_pc = _m % 12 if _m is not None else None
+        except Exception:
+            cor_pc = None
+
     for key in app._piano_keys_list:
         midi  = key["midi"]
         rect  = key["rect"]
@@ -58,12 +68,18 @@ def draw_piano(app) -> None:
         is_prev = prev_on and (midi == prev_midi)
         is_lab = (lab_pc is not None and not (is_prev or is_cur or is_det)
                   and (midi % 12) == lab_pc)
-        is_hint = (tr_hint_on and not (is_prev or is_cur or is_det or is_lab)
+        is_cor = (cor_pc is not None
+                  and not (is_prev or is_cur or is_det or is_lab)
+                  and (midi % 12) == cor_pc)
+        is_hint = (tr_hint_on
+                   and not (is_prev or is_cur or is_det or is_lab or is_cor)
                    and (midi % 12) == (app.tr_target_midi % 12))
 
         if is_prev:
             color = C_ACCENT
         elif is_lab:
+            color = C_ACCENT
+        elif is_cor:
             color = C_ACCENT
         elif is_cur:
             color = col_cur
@@ -77,14 +93,14 @@ def draw_piano(app) -> None:
             color = (215, 215, 225)
 
         pygame.draw.rect(app.screen, color, rect)
-        if is_prev or is_lab:
+        if is_prev or is_lab or is_cor:
             border = C_ACCENT
         elif is_hint:
             border = (200, 180, 255)
         else:
             border = (40, 40, 60) if black else (85, 85, 105)
         pygame.draw.rect(app.screen, border, rect,
-                         2 if (is_prev or is_hint or is_lab) else 1)
+                         2 if (is_prev or is_hint or is_lab or is_cor) else 1)
 
         if not black and midi % 12 == 0:
             oct_n = midi // 12 - 1

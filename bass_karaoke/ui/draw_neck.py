@@ -192,6 +192,36 @@ def draw_neck(app) -> None:
             if cur:
                 nm = app.font_tiny.render(stp["name"], True, C_ACCENT)
                 app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 28))
+    # ── Corridos: bajeo del compás actual (tiempos 1-2-3) ──────────
+    if getattr(app, "cor_open", False) and getattr(app, "cor_steps", None):
+        bar = app.cor_bar % len(app.cor_steps)
+        res = getattr(app, "cor_beat_res", [None] * 3)
+        running = getattr(app, "cor_running", False)
+        for i, stp in enumerate(app.cor_steps[bar]):
+            if stp.get("fret") is None or stp.get("string") is None:
+                continue
+            xc = int(note_x(stp["fret"]))
+            yc = int(STR_Y.get(stp["string"], 0))
+            if xc > nx0 + nw - 4 or stp["string"] not in STR_Y:
+                continue
+            cur = running and (i == app.cor_beat % 3)
+            r = res[i] if i < len(res) else None
+            if cur:
+                col, rad, wdt = C_ACCENT, 13, 3
+            elif r is True:
+                col, rad, wdt = C_OK, 11, 2
+            elif r is False:
+                col, rad, wdt = C_ERR, 11, 2
+            else:
+                col, rad, wdt = C_GRAY, 10, 2
+            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), rad)
+            pygame.draw.circle(app.screen, col, (xc, yc), rad, wdt)
+            num = app.font_small.render(str(i + 1), True, col)
+            app.screen.blit(num, (xc - num.get_width() // 2,
+                                   yc - num.get_height() // 2))
+            if cur:
+                nm = app.font_tiny.render(stp["name"], True, C_ACCENT)
+                app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 28))
     # ── Secuencias (X/A/V): objetivo actual en el mástil ──────────────
     sp = getattr(app, "seq_pos", None)
     if sp:

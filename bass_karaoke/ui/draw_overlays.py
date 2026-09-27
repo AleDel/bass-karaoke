@@ -387,6 +387,7 @@ def draw_help(app) -> None:
         ("Entrenamiento", [
             ("E", "Encuentra la nota (oído + mástil)"),
             ("G", "Walking Lab (moldes Mayor/menor)"),
+            ("K", "Corridos tumbados (bajeo 3/4)"),
             ("O", "Oído: escucha y repite"),
             ("X", "Técnica y dedos"),
             ("A", "Arpegios con tónica móvil"),

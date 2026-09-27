@@ -25,6 +25,7 @@ from .config import (
 )
 from .utils import fret_to_hz, hz_to_note_name, notes_match
 from .walking import EXERCISES, build_exercise, beat_matches, midi_of
+from .corridos import CORRIDO_EXERCISES, build_corrido, bajeo_matches
 from .parser import parse_musicxml, parse_grace_notes
 from . import features
 features.ensure_on_path()
@@ -41,8 +42,9 @@ from .ui import (
     draw_note_panel, draw_metronome, draw_pitch_panel,
     draw_stats_panel, draw_bottom_bar,
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
-    draw_song_menu, draw_feature_menu, draw_help, draw_training,
-    draw_lab_panel, draw_ear, draw_tech, draw_arp, draw_scale,
+    draw_song_menu, draw_feature_menu, draw_help,
+    draw_training, draw_lab_panel, draw_ear, draw_tech, draw_arp,
+    draw_scale, draw_corrido_panel,
 )
 
 FPS = 60
@@ -217,6 +219,29 @@ class BassKaraoke:
         self.lab_role_total = [0, 0, 0, 0]
         self.lab_beat_res   = [None] * 4  # resultado del compás en curso
         self.lab_last_msg   = ""
+
+        # ── Corridos tumbados: bajeo en 3/4 (K) ──────────
+        self.cor_open       = False
+        self.cor_running    = False
+        self.cor_idx        = 0
+        self.cor_title      = ""
+        self.cor_bars       = []     # etiquetas por compás ("C R", "C 5ª", …)
+        self.cor_steps      = []     # 2 compases por acorde × 3 tiempos
+        self.cor_roots      = []     # midi de cada RAÍZ DE ACORDE (adornos)
+        self.cor_fifth      = "down" # molde de quinta: "down" | "up"
+        self.cor_ornament   = True   # adorno cromático en T3
+        self.cor_bpm        = 90.0
+        self.cor_t          = 0.0
+        self.cor_last_total = -1
+        self.cor_beat       = 0
+        self.cor_bar        = 0
+        self.cor_heard      = False  # el tiempo actual ya se oyó bien
+        self.cor_ok         = 0
+        self.cor_total      = 0
+        self.cor_role_ok    = [0, 0, 0]
+        self.cor_role_total = [0, 0, 0]
+        self.cor_beat_res   = [None] * 3  # resultado del compás en curso
+        self.cor_last_msg   = ""
 
         # ── Oído call-response: escucha y repite (O) ───────────
         self.ear_open     = False
@@ -1402,6 +1427,76 @@ class BassKaraoke:
                              else f"T{beat + 1} ✗ (toca {st['name']})")
 
     # ══════════════════════════════════════════════════════════════════
+    #  CORRIDOS TUMBADOS — bajeo en 3/4 (K)
+    # ══════════════════════════════════════════════════════════════════
+    def _cor_open(self):
+        self._close_modes()
+        self.cor_open = True
+        if not self.cor_steps:
+            self._cor_load(self.cor_idx)
+
+    def _cor_load(self, idx: int):
+        idx = int(idx) % len(CORRIDO_EXERCISES)
+        self.cor_idx   = idx
+        ex = CORRIDO_EXERCISES[idx]
+        self.cor_title = ex["title"]
+        self.cor_steps, self.cor_roots = build_corrido(
+            ex, fifth=self.cor_fifth, ornament=self.cor_ornament)
+        self.cor_bars = []
+        for b in ex["bars"]:
+            self.cor_bars += [f"{b['name']} R", f"{b['name']} 5ª"]
+        self.cor_t          = 0.0
+        self.cor_last_total = -1
+        self.cor_beat       = 0
+        self.cor_bar        = 0
+        self.cor_heard      = False
+        self.cor_ok         = 0
+        self.cor_total      = 0
+        self.cor_role_ok    = [0, 0, 0]
+        self.cor_role_total = [0, 0, 0]
+        self.cor_beat_res   = [None] * 3
+        self.cor_last_msg   = ""
+
+    def _cor_toggle_run(self):
+        if not self.cor_steps:
+            self._cor_load(self.cor_idx)
+        self.cor_running = not self.cor_running
+        self.cor_t          = 0.0
+        self.cor_last_total = -1
+        self.cor_beat       = 0
+        self.cor_bar        = 0
+        self.cor_heard      = False
+        self.cor_beat_res   = [None] * 3
+
+    def _cor_tempo(self, delta: float):
+        self.cor_bpm = max(40.0, min(180.0, self.cor_bpm + delta))
+
+    def _cor_next_root(self, bar: int):
+        """Raíz del acorde siguiente (objetivo del adorno)."""
+        nch = max(1, len(self.cor_roots))
+        return self.cor_roots[((bar // 2) + 1) % nch] if self.cor_roots else 0
+
+    def _cor_score_beat(self):
+        """Puntúa el tiempo recién terminado. Los silencios no puntúan."""
+        if not self.cor_steps:
+            return
+        bar  = self.cor_bar % len(self.cor_steps)
+        beat = self.cor_beat % 3
+        st = self.cor_steps[bar][beat]
+        if st.get("midi") is None:
+            return
+        ok = bool(self.cor_heard)
+        self.cor_total += 1
+        self.cor_role_total[beat] += 1
+        if ok:
+            self.cor_ok += 1
+            self.cor_role_ok[beat] += 1
+        if beat < len(self.cor_beat_res):
+            self.cor_beat_res[beat] = ok
+        self.cor_last_msg = (f"T{beat + 1} {st['role']} {st['name']} ✓" if ok
+                             else f"T{beat + 1} ✗ (toca {st['name']})")
+
+    # ══════════════════════════════════════════════════════════════════
     #  OÍDO CALL-RESPONSE — escucha y repite (O)
     # ══════════════════════════════════════════════════════════════════
     def _ear_open(self):
@@ -1460,6 +1555,8 @@ class BassKaraoke:
         self.tr_hint       = False
         self.lab_open      = False
         self.lab_running   = False
+        self.cor_open      = False
+        self.cor_running   = False
         self.ear_open      = False
         self.tx_open = self.ar_open = self.sc_open = False
         self.seq_pos, self.seq_midi, self.seq_label = None, None, ""
@@ -1758,6 +1855,30 @@ class BassKaraoke:
                                          self.lab_beat % 4, nxt)):
                     self.lab_heard = True
 
+        # ── Corridos: bajeo en 3/4 + escucha por tiempo ──────────
+        if self.cor_open and self.cor_running and self.cor_steps:
+            self.cor_t += dt
+            spb = 60.0 / max(20.0, self.cor_bpm)
+            total = int(self.cor_t // spb)
+            if total != self.cor_last_total:
+                if self.cor_last_total >= 0:
+                    self._cor_score_beat()
+                self.cor_last_total = total
+                new_bar = (total // 3) % len(self.cor_steps)
+                if new_bar != self.cor_bar:
+                    self.cor_bar = new_bar
+                    self.cor_beat_res = [None] * 3
+                self.cor_beat  = total % 3
+                self.cor_heard = False
+                self._play_click(self.cor_beat == 0, force=True)
+            else:
+                bar = self.cor_bar % len(self.cor_steps)
+                st = self.cor_steps[bar][self.cor_beat % 3]
+                if st.get("midi") is not None and _hz > MIN_HZ:
+                    if bajeo_matches(_hz, st,
+                                     self._cor_next_root(bar)) is True:
+                        self.cor_heard = True
+
         # ── Oído: escucha oculta, repite con el bajo ──────────────────
         if self.ear_open and self.ear_midi is not None:
             if self.ear_revealed:
@@ -1885,6 +2006,8 @@ class BassKaraoke:
             draw_training(self)
         if self.lab_open:
             draw_lab_panel(self)
+        if self.cor_open:
+            draw_corrido_panel(self)
         if self.ear_open:
             draw_ear(self)
         if self.tx_open:
@@ -2189,6 +2312,28 @@ class BassKaraoke:
                     self._lab_tempo(-5)
                 return True
 
+            # ── Corridos tumbados: bajeo en 3/4 (K) ────────────
+            if self.cor_open:
+                if event.key in (pygame.K_ESCAPE, pygame.K_k):
+                    self.cor_open    = False
+                    self.cor_running = False
+                elif event.key == pygame.K_SPACE:
+                    self._cor_toggle_run()
+                elif event.key == pygame.K_n:
+                    self._cor_load(self.cor_idx + 1)
+                elif event.key == pygame.K_q:
+                    self.cor_fifth = ("up" if self.cor_fifth == "down"
+                                      else "down")
+                    self._cor_load(self.cor_idx)
+                elif event.key == pygame.K_f:
+                    self.cor_ornament = not self.cor_ornament
+                    self._cor_load(self.cor_idx)
+                elif event.key == pygame.K_UP:
+                    self._cor_tempo(+5)
+                elif event.key == pygame.K_DOWN:
+                    self._cor_tempo(-5)
+                return True
+
             # ── Oído call-response (O) ───────────────────────────────
             if self.ear_open:
                 if event.key in (pygame.K_ESCAPE, pygame.K_o):
@@ -2350,6 +2495,8 @@ class BassKaraoke:
                 self._training_open()
             elif event.key == pygame.K_g:
                 self._lab_open()
+            elif event.key == pygame.K_k:
+                self._cor_open()
             elif event.key == pygame.K_o:
                 self._ear_open()
             elif event.key == pygame.K_x:
@@ -2412,7 +2559,7 @@ class BassKaraoke:
                         or self.song_menu_open or self.feature_menu_open
                         or self.tuner_open or self.help_open
                         or self.training_open or self.lab_open
-                        or self.ear_open):
+                        or self.cor_open or self.ear_open):
                     _midi = self._piano_hit(event.pos)
                     if _midi is not None:
                         self._preview_from_piano(_midi)
@@ -2430,6 +2577,7 @@ class BassKaraoke:
                         and not self.tuner_open
                         and not self.training_open
                         and not self.lab_open
+                        and not self.cor_open
                         and not self.ear_open
                         and not self.help_open):
                     self._drag_seeking    = True
