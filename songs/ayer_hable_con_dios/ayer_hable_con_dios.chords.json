@@ -1,0 +1,362 @@
+{
+ "chords": [
+  [
+   0.7,
+   "Mib"
+  ],
+  [
+   2.62,
+   "Lab"
+  ],
+  [
+   3.92,
+   "Fam"
+  ],
+  [
+   5.22,
+   "Dom"
+  ],
+  [
+   7.78,
+   "Mib"
+  ],
+  [
+   9.03,
+   "Sibm"
+  ],
+  [
+   10.91,
+   "Mib"
+  ],
+  [
+   12.68,
+   "Fam"
+  ],
+  [
+   15.84,
+   "Do"
+  ],
+  [
+   17.14,
+   "Fam"
+  ],
+  [
+   19.09,
+   "Dom"
+  ],
+  [
+   21.01,
+   "Labm"
+  ],
+  [
+   22.94,
+   "Sibm"
+  ],
+  [
+   24.89,
+   "Fam"
+  ],
+  [
+   27.42,
+   "Do"
+  ],
+  [
+   28.75,
+   "Fam"
+  ],
+  [
+   31.32,
+   "Solm"
+  ],
+  [
+   33.25,
+   "Lab"
+  ],
+  [
+   34.6,
+   "Sibm"
+  ],
+  [
+   36.48,
+   "Do#"
+  ],
+  [
+   37.78,
+   "Lab"
+  ],
+  [
+   41.66,
+   "Fam"
+  ],
+  [
+   45.51,
+   "Dom"
+  ],
+  [
+   49.41,
+   "Fam"
+  ],
+  [
+   51.32,
+   "Rem"
+  ],
+  [
+   53.27,
+   "Do"
+  ],
+  [
+   55.84,
+   "Fam"
+  ],
+  [
+   57.75,
+   "Lab"
+  ],
+  [
+   59.7,
+   "Solm"
+  ],
+  [
+   63.6,
+   "Lab"
+  ],
+  [
+   65.53,
+   "Lab"
+  ],
+  [
+   68.08,
+   "Fam"
+  ],
+  [
+   69.38,
+   "Lab"
+  ],
+  [
+   71.98,
+   "Sol"
+  ],
+  [
+   76.58,
+   "Sibm"
+  ],
+  [
+   78.07,
+   "Rem"
+  ],
+  [
+   80.04,
+   "Lab"
+  ],
+  [
+   83.43,
+   "Do#"
+  ],
+  [
+   85.36,
+   "Do#"
+  ],
+  [
+   86.68,
+   "Fa"
+  ],
+  [
+   88.1,
+   "Do#"
+  ],
+  [
+   89.37,
+   "Rem"
+  ],
+  [
+   90.67,
+   "Fam"
+  ],
+  [
+   95.2,
+   "Fa"
+  ],
+  [
+   96.5,
+   "Rem"
+  ],
+  [
+   97.78,
+   "Solm"
+  ],
+  [
+   99.08,
+   "Dom"
+  ],
+  [
+   100.98,
+   "Fam"
+  ],
+  [
+   104.88,
+   "Lab"
+  ],
+  [
+   106.16,
+   "Do"
+  ],
+  [
+   108.74,
+   "Lab"
+  ],
+  [
+   111.34,
+   "Do"
+  ],
+  [
+   113.24,
+   "Sibm"
+  ],
+  [
+   115.19,
+   "Lab"
+  ],
+  [
+   117.12,
+   "Do#"
+  ],
+  [
+   118.42,
+   "Lab"
+  ],
+  [
+   119.7,
+   "Fam"
+  ]
+ ],
+ "lyrics": [
+  [
+   11.49,
+   "Ayer hablé con Dios"
+  ],
+  [
+   20.43,
+   "Me dijo que me prepare"
+  ],
+  [
+   20.43,
+   "Que lo mío ya viene en camino"
+  ],
+  [
+   32.88,
+   "Ayer hablé con Dios, me dijo: \"No te frenes"
+  ],
+  [
+   32.88,
+   "Que lo que estás sembrando pronto se sostiene"
+  ],
+  [
+   38.38,
+   "Que vienen cosas grandes, más grandes que lo que crees"
+  ],
+  [
+   40.1,
+   "Que todo lo que perdiste se multiplica en cien\""
+  ],
+  [
+   40.1,
+   "Que no mire pa'bajo cuando el mundo critique"
+  ],
+  [
+   43.61,
+   "Que el que resiste fuerte es el que después dirige"
+  ],
+  [
+   55.47,
+   "Que el proceso duele, pero te construye"
+  ],
+  [
+   55.47,
+   "Y el que confía en Dios nunca se destruye"
+  ],
+  [
+   58.51,
+   "Me dijo: \"Hijo, tranquilo, ya casi te toca\""
+  ],
+  [
+   58.51,
+   "Que el tiempo perfecto nunca se equivoca"
+  ],
+  [
+   60.46,
+   "Que aguante un poco más, que no me desenfoque"
+  ],
+  [
+   72.49,
+   "Que cuando se me dé, nadie lo va a parar"
+  ],
+  [
+   72.49,
+   "Ayer hablé con Dios y me dijo que se me va a dar"
+  ],
+  [
+   74.65,
+   "Que vienen cosas grandes, que el cielo se va a abrir de par en par"
+  ],
+  [
+   74.65,
+   "Ayer hablé con Dios y me dijo: \"No mires atrás"
+  ],
+  [
+   79.99,
+   "Lo que viene es tuyo y nadie te lo va a quitar\""
+  ],
+  [
+   89.33,
+   "Me dijo que la espera fue la testigo, que el silencio era parte del camino"
+  ],
+  [
+   89.33,
+   "Que cada lágrima fue entrenamiento pa cuando llegue el gran momento"
+  ],
+  [
+   96.87,
+   "Que el que dudó, después va a mirar, como el que oró empezó a ganar"
+  ],
+  [
+   96.87,
+   "Que cuando Dios te firma el destino, no hay enemigo que cambie el camino"
+  ],
+  [
+   100.91,
+   "Si todo se oscurece, yo sigo creyendo"
+  ],
+  [
+   111.27,
+   "Si todo se cae, yo sigo de pie"
+  ],
+  [
+   111.27,
+   "Porque ayer oré y sentí que me respondió"
+  ],
+  [
+   116.47,
+   "Me dijo: \"Va a estar bien\""
+  ],
+  [
+   118.96,
+   "Ayer hablé con Dios y me dijo que se me va a dar"
+  ],
+  [
+   118.96,
+   "Que vienen cosas grandes, que nada me lo va a quitar"
+  ],
+  [
+   121.44,
+   "Ayer hablé con Dios y me dijo: \"No mires atrás"
+  ],
+  [
+   121.44,
+   "Lo que viene es tuyo\", y ya no lo voy a soltar"
+  ],
+  [
+   123.97,
+   "Corridos del Rey"
+  ]
+ ]
+}

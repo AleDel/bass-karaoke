@@ -26,6 +26,7 @@ from .config import (
 from .utils import fret_to_hz, hz_to_note_name, notes_match
 from .walking import EXERCISES, build_exercise, beat_matches, midi_of
 from .corridos import CORRIDO_EXERCISES, build_corrido, bajeo_matches
+from .chords import load_song_map
 from .parser import parse_musicxml, parse_grace_notes
 from . import features
 features.ensure_on_path()
@@ -44,7 +45,7 @@ from .ui import (
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
     draw_song_menu, draw_feature_menu, draw_help,
     draw_training, draw_lab_panel, draw_ear, draw_tech, draw_arp,
-    draw_scale, draw_corrido_panel,
+    draw_scale, draw_corrido_panel, draw_karaoke_strip,
 )
 
 FPS = 60
@@ -329,6 +330,11 @@ class BassKaraoke:
         self.songs          = self._scan_songs()
         self._piano_keys_list = []
 
+        # ── Karaoke (acordes + letra, J para mostrar/ocultar) ───
+        self.chord_events = []  # [(sec, "Sibm")] del <base>.chords.json
+        self.lyric_events = []  # [(sec, "línea")] del <base>.chords.json
+        self.chords_on    = True
+
         # ── Score pre-render ───────────────────────────────────────────
         self.score_renderer  = "verovio"
         self._score_loading  = False
@@ -533,6 +539,18 @@ class BassKaraoke:
         self._load_notes()
         self._load_mp3(song["mp3"])
         self.reiniciar()
+        # Karaoke (acordes + letra): <base>.chords.json junto al musicxml
+        self.chord_events = []
+        self.lyric_events = []
+        try:
+            base, _ = os.path.splitext(self.musicxml_path)
+            self.chord_events, self.lyric_events = load_song_map(
+                base + ".chords.json")
+            if self.chord_events or self.lyric_events:
+                print(f"[OK] Karaoke: {len(self.chord_events)} acordes, "
+                      f"{len(self.lyric_events)} líneas")
+        except Exception as e:
+            print(f"[Karaoke WARN] {e}")
         # Re-generar partitura y estado dependiente de la canción
         self._score_cache    = {}
         self._score_surf     = None
@@ -1980,6 +1998,8 @@ class BassKaraoke:
     def draw(self):
         self.screen.fill(C_BG)
         self._draw_header()
+        if self.chords_on and (self.chord_events or self.lyric_events):
+            draw_karaoke_strip(self)
         draw_tab(self)
         draw_score(self)
         draw_guitartab(self)
@@ -2518,6 +2538,8 @@ class BassKaraoke:
                 self.metro_sound = not self.metro_sound
             elif event.key == pygame.K_h:
                 self.neck_map = not self.neck_map
+            elif event.key == pygame.K_j:
+                self.chords_on = not self.chords_on
             elif event.key == pygame.K_F1:
                 self.help_open = not self.help_open
             elif event.key == pygame.K_F5:

@@ -94,8 +94,10 @@ W, H = 1280, 860
 FPS  = 60
 
 HEADER_H  = 55
-TAB_Y     = HEADER_H + 3
-TAB_H     = 252
+KARAOKE_Y = HEADER_H + 3   # tira de acordes + letra (J para mostrar/ocultar)
+KARAOKE_H = 44
+TAB_Y     = KARAOKE_Y + KARAOKE_H
+TAB_H     = 208
 SCORE_H   = 140   # altura de la sub-zona de partitura dentro de TAB
 GUITARTAB_H = 60  # tablatura estilo TuxGuitar debajo de la partitura
 GUITARTAB_Y = TAB_Y + TAB_H + 8 + SCORE_H + 2   # = 460

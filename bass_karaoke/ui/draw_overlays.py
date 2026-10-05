@@ -382,6 +382,7 @@ def draw_help(app) -> None:
             ("B", "Tempo en BPM ↔ figura"),
             ("H", "Mapa del mástil"),
             ("C", "Countdown on/off"),
+            ("J", "Acordes + letra (karaoke)"),
             ("Clic mástil/piano", "Oír y ver la nota (aprender notas)"),
         ]),
         ("Entrenamiento", [
