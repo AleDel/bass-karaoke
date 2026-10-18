@@ -66,12 +66,13 @@ def draw_note_panel(app) -> None:
 
 def draw_metronome(app) -> None:
     mx, my, bw = 220, LOWER_Y + 4, 42
+    nbeats   = max(2, min(12, int(getattr(app, 'beats_per_bar', 4) or 4)))
     metro_on = getattr(app, 'metro_sound', True)
     lbl_col  = C_GRAY if metro_on else (60, 60, 80)
-    lbl_str  = "METRO" if metro_on else "METRO(off)"
+    lbl_str  = ("METRO" if metro_on else "METRO(off)") + f"  {nbeats}/4"
     lbl = app.font_tiny.render(lbl_str, True, lbl_col)
     app.screen.blit(lbl, (mx, my - 13))
-    for b in range(4):
+    for b in range(nbeats):
         bx     = mx + b * (bw + 4)
         active = (app.playing or app.counting_down) and (b == app.metro_beat)
         c = C_ACCENT if (active and b == 0) else C_WHITE if active else C_DGRAY
@@ -215,7 +216,7 @@ def draw_bottom_bar(app) -> None:
     hints = [
         ("SPC", "Play"), ("R", "Reinicio"), ("←/→", "Compás"),
         ("↑/↓", "Tempo"), ("L", "Canciones"), ("W", "Alinear"),
-        ("E", "Notas"), ("G", "Walking"),
+        ("Y", "Acordes"), ("E", "Notas"), ("G", "Walking"),
         ("ESC", "Salir"), ("F1", "Ayuda"),
     ]
     x = 8

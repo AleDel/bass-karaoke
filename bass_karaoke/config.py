@@ -95,15 +95,22 @@ FPS  = 60
 
 HEADER_H  = 55
 KARAOKE_Y = HEADER_H + 3   # tira de acordes + letra (J para mostrar/ocultar)
-KARAOKE_H = 44
-TAB_Y     = KARAOKE_Y + KARAOKE_H
-TAB_H     = 208
-SCORE_H   = 140   # altura de la sub-zona de partitura dentro de TAB
-GUITARTAB_H = 60  # tablatura estilo TuxGuitar debajo de la partitura
-GUITARTAB_Y = TAB_Y + TAB_H + 8 + SCORE_H + 2   # = 460
-TAB_TOTAL = TAB_H + SCORE_H + GUITARTAB_H + 8    # = 460
+KARAOKE_H = 64   # timeline estilo Chordify: bloques + subdivisiones + letra
 
-NECK_Y    = TAB_Y + TAB_TOTAL + 16   # = 534
+# Franja de waveform sincronizada (scroll con el mismo reloj que tab/acordes).
+# Ocupa 48 px justo debajo de los acordes; partitura y tablatura ceden ese
+# espacio (SCORE_H/GUITARTAB_H) para que mástil, piano y paneles no se muevan.
+WAVEFORM_Y = KARAOKE_Y + KARAOKE_H
+WAVEFORM_H = 48
+
+TAB_Y     = WAVEFORM_Y + WAVEFORM_H
+TAB_H     = 208
+SCORE_H   = 108   # altura de la sub-zona de partitura dentro de TAB
+GUITARTAB_H = 44  # tablatura estilo TuxGuitar debajo de la partitura
+GUITARTAB_Y = TAB_Y + TAB_H + 8 + SCORE_H + 2
+TAB_TOTAL = TAB_H + SCORE_H + GUITARTAB_H + 8
+
+NECK_Y    = TAB_Y + TAB_TOTAL + 16   # = 554 (sin cambios)
 NECK_H    = 108
 NECK_W    = 726
 
@@ -117,8 +124,8 @@ PIANO_Y   = NECK_Y
 PIANO_H   = NECK_H
 PIANO_W   = W - PIANO_X - 2
 
-LOWER_Y   = NECK_Y + NECK_H + 14   # = 656
-LOWER_H   = 148                     # ajustado a H=860 (BOTTOM_Y=808)
+LOWER_Y   = NECK_Y + NECK_H + 14   # (se recalcula: +20 por KARAOKE_H=64)
+LOWER_H   = 128                     # encogido 20px para compensar KARAOKE_H (BOTTOM_Y=808)
 
 BOTTOM_Y  = H - 52
 

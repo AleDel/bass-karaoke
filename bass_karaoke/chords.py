@@ -171,10 +171,14 @@ def lyric_at(events, sec: float, default: str = ""):
     return txt
 
 
-def save_song_map(path: str, chords, lyrics):
+def save_song_map(path: str, chords, lyrics, barlen: int = 4):
+    """Guarda el mapa de la canción. `barlen` = tiempos por compás
+    (3 en 3/4 como los corridos tumbados, 4 en 4/4) para agrupar las
+    subdivisiones del widget timeline estilo Chordify."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"chords": [[s, n] for s, n in chords],
-                   "lyrics": [[s, t] for s, t in lyrics]}, f,
+                   "lyrics": [[s, t] for s, t in lyrics],
+                   "barlen": int(barlen)}, f,
                   ensure_ascii=False, indent=1)
 
 
@@ -189,3 +193,21 @@ def load_song_map(path: str):
         return chords, lyrics
     except Exception:
         return [], []
+
+
+def load_song_barlen(path: str, default: int = 4) -> int:
+    """Lee `barlen` (tiempos por compás) del <base>.chords.json.
+
+    Es lo que en el HTML de Chordify aparece como `barlength-N` en
+    `<div id="chords" class="chords ... barlength-3">`: con N=3 el
+    widget agrupa las subdivisiones de 3 en 3 (compás de 3/4).
+    Devuelve `default` si no hay dato."""
+    try:
+        if not path or not os.path.exists(path):
+            return default
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        b = int(d.get("barlen", default))
+        return b if b in (2, 3, 4, 6) else default
+    except Exception:
+        return default

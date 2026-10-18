@@ -46,8 +46,10 @@ def parse_musicxml(filepath: str):
         tempo_map — lista de (start16, qpm) con los cambios de tempo de la
                     partitura, en negras por minuto (qpm). Si no hay marcas,
                     queda [(0, bpm)].
-        stats     — dict {has_tab, total_pitch, in_range, transposed, dropped}:
-                    cobertura del fallback por pitch (0s si hay tablatura).
+        stats     — dict {has_tab, total_pitch, in_range, transposed, dropped,
+                    beats_per_bar, beat_type}: cobertura del fallback por pitch
+                    (0s si hay tablatura) y el compás de la primera indicación de
+                    tiempo (para el metrónomo; beats_per_bar=4 si no hay <time>).
     """
     tree = ET.parse(filepath)
     root = tree.getroot()
@@ -62,10 +64,18 @@ def parse_musicxml(filepath: str):
     # Candidatas por altura (para archivos sin tablatura, p.ej. export de MuseScore)
     pitch_cands = []
     found_tab   = False
+    # Compás (beats por compás) de la primera indicación de tiempo; el metrónomo
+    # lo usa para acentuar el tiempo 1 y contar los tiempos correctos (3/4, 4/4…).
+    beats_per_bar = None
+    beat_type_val = 4
+    # Inicios reales de compás en 16avos, por número de compás (para la rejilla
+    # visual y el snap: respeta anacrusas y cambios de compás).
+    measure_starts = {}
 
     for part in root.findall("part"):
         divs        = 960
         measure_abs = 0
+        prev_tab    = None
 
         for measure in part.findall("measure"):
             measure_num = int(measure.get("number", "0"))
@@ -76,6 +86,8 @@ def parse_musicxml(filepath: str):
                 d = attr.find("divisions")
                 if d is not None:
                     divs = int(d.text)
+            measure_starts.setdefault(measure_num,
+                                      round(measure_abs / divs * 4))
 
             for direction in measure.findall("direction"):
                 for metro in direction.findall(".//metronome"):
@@ -98,8 +110,10 @@ def parse_musicxml(filepath: str):
                 tag = child.tag
                 if tag == "backup":
                     cur_pos -= int(child.find("duration").text)
+                    prev_tab = None
                 elif tag == "forward":
                     cur_pos += int(child.find("duration").text)
+                    prev_tab = None
                 elif tag == "note":
                     is_chord  = child.find("chord") is not None
                     staff_el  = child.find("staff")
@@ -107,6 +121,8 @@ def parse_musicxml(filepath: str):
                     dur_el    = child.find("duration")
                     dur_divs  = int(dur_el.text) if dur_el is not None else 0
                     is_rest   = child.find("rest") is not None
+                    if is_rest:
+                        prev_tab = None
                     fret_el   = child.find(".//notations/technical/fret")
                     string_el = child.find(".//notations/technical/string")
 
@@ -133,15 +149,25 @@ def parse_musicxml(filepath: str):
                             if ae is not None: p_alter  = int(float(ae.text))
                         type_el  = child.find("type")
                         dur_type = type_el.text.strip() if type_el is not None else "quarter"
-                        notes.append({
-                            "fret": fret, "string": string,
-                            "dur": dur16, "start16": start16,
-                            "hz": hz, "note_name": hz_to_note_name(hz),
-                            "measure_num": measure_num,
-                            "section": f"Compás {measure_num}",
-                            "step": p_step, "octave": p_octave, "alter": p_alter,
-                            "dur_type": dur_type,
-                        })
+                        tie_stop = (child.find("tie[@type='stop']") is not None
+                                    or child.find("notations/tied[@type='stop']")
+                                    is not None)
+                        if (tie_stop and prev_tab is not None
+                                and prev_tab["hz"] == hz
+                                and prev_tab["string"] == string
+                                and prev_tab["start16"] + prev_tab["dur"] == start16):
+                            prev_tab["dur"] += dur16
+                        else:
+                            prev_tab = {
+                                "fret": fret, "string": string,
+                                "dur": dur16, "start16": start16,
+                                "hz": hz, "note_name": hz_to_note_name(hz),
+                                "measure_num": measure_num,
+                                "section": f"Compás {measure_num}",
+                                "step": p_step, "octave": p_octave, "alter": p_alter,
+                                "dur_type": dur_type,
+                            }
+                            notes.append(prev_tab)
                     elif not is_chord and not is_rest:
                         # Sin tablatura → guardar altura para el fallback
                         pitch_el = child.find("pitch")
@@ -170,13 +196,19 @@ def parse_musicxml(filepath: str):
             if time_el is not None:
                 beats     = int(time_el.find("beats").text)
                 beat_type = int(time_el.find("beat-type").text)
+                if beats_per_bar is None:
+                    beats_per_bar = beats
+                    beat_type_val = beat_type
                 measure_abs += int(divs * beats * (4 / beat_type))
             else:
                 measure_abs += max(cur_pos, divs * 4)
 
     # Fallback: archivo sin tablatura → derivar traste/cuerda desde el pitch
     stats = {"has_tab": found_tab, "total_pitch": 0, "in_range": 0,
-             "transposed": 0, "dropped": 0}
+             "transposed": 0, "dropped": 0,
+             "beats_per_bar": beats_per_bar or 4,
+             "beat_type": beat_type_val,
+             "measure_starts": [[n, s] for n, s in sorted(measure_starts.items())]}
     if not found_tab and pitch_cands:
         stats["total_pitch"] = len(pitch_cands)
         for c in pitch_cands:

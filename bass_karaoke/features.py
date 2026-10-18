@@ -116,6 +116,21 @@ FEATURES = [
         ),
     },
     {
+        "id": "demucs",
+        "name": "Demucs — separación de bajo (transcripción)",
+        "category": "audio",
+        "packages": ["demucs"],
+        "requires": ["torch-core"],
+        "size": "~80 MB (+ PyTorch)",
+        "needs": "CPU o GPU (CUDA) recomendada",
+        "desc": (
+            "Separa la pista de bajo del mix para transcribir canciones que "
+            "solo tienen audio (tecla F7). Sin Demucs se usa el stem "
+            "'<cancion>-bass.wav' si existe, o un filtro paso-bajo del mix. "
+            "Con GPU compatible es mucho más rápido."
+        ),
+    },
+    {
         "id": "varispeed",
         "name": "Time-stretch y análisis de tempo",
         "category": "audio",

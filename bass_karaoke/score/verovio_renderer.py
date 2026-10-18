@@ -37,8 +37,15 @@ except ImportError:
 
 
 def strip_tab_staff(xml_str: str) -> str:
-    """Elimina el staff de tablatura (staff 2) del MusicXML para que
-    Verovio sólo renderice la notación estándar (staff 1)."""
+    """Deja el MusicXML en notación estándar para Verovio.
+
+    Caso normal (staff 1 + staff 2): elimina el staff de tablatura (2).
+    Caso tab-only (todas las notas en staff 2, p. ej. exportado desde el
+    MIDI de basic_pitch): NO hay nada que dejar, así que en vez de borrar
+    todo se reetiqueta el staff 2 → 1 y se quita la tablatura; así la
+    partitura se ve en notación estándar.
+
+    Sin este fallback un archivo tab-only quedaba vacío (0 notas)."""
     import re as _re
     xml_clean = _re.sub(r'<!DOCTYPE[^[>]*(?:\[[^\]]*\])?[^>]*>', '', xml_str)
     try:
@@ -46,7 +53,18 @@ def strip_tab_staff(xml_str: str) -> str:
     except ET.ParseError:
         return xml_str
 
+    def _staff_of(note):
+        el = note.find('staff')
+        return el.text if el is not None else '1'
+
     for part in root.iter('part'):
+        # ¿Hay alguna nota real (no silencio) fuera del staff 2?
+        has_staff1 = any(
+            _staff_of(n) != '2'
+            for n in part.iter('note')
+            if n.find('rest') is None
+        )
+
         for measure in part.findall('measure'):
             for attrs in measure.findall('attributes'):
                 staves_el = attrs.find('staves')
@@ -58,6 +76,20 @@ def strip_tab_staff(xml_str: str) -> str:
                 for sd in list(attrs.findall('staff-details')):
                     if sd.get('number') == '2':
                         attrs.remove(sd)
+
+            if not has_staff1:
+                # Modo tab-only: promueve el staff 2 a notación estándar.
+                for note in measure.findall('note'):
+                    st = note.find('staff')
+                    if st is not None and st.text == '2':
+                        st.text = '1'
+                    notations = note.find('notations')
+                    if notations is not None:
+                        for tech in list(notations.findall('technical')):
+                            notations.remove(tech)
+                        if len(notations) == 0:
+                            note.remove(notations)
+                continue
 
             children = list(measure)
             remove_set = set()

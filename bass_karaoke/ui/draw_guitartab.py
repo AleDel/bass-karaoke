@@ -74,14 +74,10 @@ def draw_guitartab(app) -> None:
     vx      = int(app.viewport_x)
 
     # ── Líneas de compás (usa coordenadas del score si hay xs) ───────────────
-    # Detectar inicio de cada compás a partir de las notas
-    seen_measures = {}
-    for note in app.notes:
-        m = note["measure_num"]
-        if m not in seen_measures:
-            seen_measures[m] = note["start16"]
-    for s16 in seen_measures.values():
-        bx = int(note_screen_x(s16))
+    # Rejilla real del MusicXML (respeta la métrica: 3/4 → cada 12 dieciseisavos)
+    phase = app.grid_phase16()
+    for s16 in app.bar_starts16():
+        bx = int(note_screen_x(s16 + phase if s16 > 0 else s16))
         if 42 < bx < W:
             pygame.draw.line(app.screen, C_DGRAY,
                              (bx, GTY + 3), (bx, GTY + GTH - 3), 1)

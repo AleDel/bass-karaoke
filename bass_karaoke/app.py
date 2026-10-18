@@ -12,6 +12,7 @@ import pygame
 
 from .config import (
     W, H, HEADER_H, TAB_Y, TAB_H, SCORE_H, NECK_Y, NECK_H, NECK_W,
+    WAVEFORM_Y, WAVEFORM_H, KARAOKE_Y, KARAOKE_H,
     PIANO_X, PIANO_Y, PIANO_W, PIANO_H, LOWER_Y, LOWER_H, BOTTOM_Y,
     PIANO_START_MIDI, PIANO_END_MIDI,
     NECK_FRETS, NECK_DOT_FRETS, NECK_OCT_FRETS,
@@ -26,7 +27,7 @@ from .config import (
 from .utils import fret_to_hz, hz_to_note_name, notes_match
 from .walking import EXERCISES, build_exercise, beat_matches, midi_of
 from .corridos import CORRIDO_EXERCISES, build_corrido, bajeo_matches
-from .chords import load_song_map
+from .chords import load_song_map, load_song_barlen, save_song_map
 from .parser import parse_musicxml, parse_grace_notes
 from . import features
 features.ensure_on_path()
@@ -45,7 +46,7 @@ from .ui import (
     draw_tuner, draw_countdown, draw_device_menu, draw_pitch_menu,
     draw_song_menu, draw_feature_menu, draw_help,
     draw_training, draw_lab_panel, draw_ear, draw_tech, draw_arp,
-    draw_scale, draw_corrido_panel, draw_karaoke_strip,
+    draw_scale, draw_corrido_panel, draw_karaoke_strip, draw_waveform_strip,
 )
 
 FPS = 60
@@ -110,7 +111,23 @@ class BassKaraoke:
         self.score_ok       = 0
         self.score_total    = 0
         self.mp3_offset_sec = 0.0
+        # Ancla independiente: instante del MP3 donde empieza el compás 1
+        # (inicio de canción). El tramo song_start..mp3_offset (silencio/lead-in)
+        # se estira sin tocar el resto de la partitura.
+        self.song_start_sec = 0.0
         self._t             = 0.0   # tiempo acumulado para animaciones
+
+        # ── Waveform de la vista principal (franja sincronizada) ───────
+        self.song_wave       = None   # (min, max) normalizado -1..1
+        self.song_wave_n     = 0
+        self.song_total_sec  = 0.0
+        self._wave_dragging  = False
+        self._wave_drag_mx   = 0
+        self._wave_drag_off  = 0.0
+        self._wave_drag_start = 0.0
+        self._wave_drag_acc   = 0.0
+        self._anchor_drag     = None   # "bass" | "start" | None
+        self._anchor_drag_mx  = 0
 
         # ── Countdown ──────────────────────────────────────────────────
         self.counting_down     = False
@@ -165,6 +182,7 @@ class BassKaraoke:
         self.metro_beat    = 0
         self.metro_flash   = 0.0
         self.metro_sound   = False  # desactivado por defecto; N para activar
+        self.beats_per_bar = 4       # tiempos por compás (del MusicXML; 3 en 3/4)
         self._click_hi, self._click_lo = self._build_clicks()
 
         # ── Mástil: mapa de notas de la canción ───────────────────────
@@ -290,6 +308,7 @@ class BassKaraoke:
         self.align_view_span   = 0.0
         self.align_cursor_sec  = 0.0
         self.align_dragging    = False   # arrastrando el offset (inicio bajo)
+        self.align_dragging_start = False  # arrastrando el inicio de canción
         self.align_drag_marker = None    # start16 de la marca de tempo arrastrada
         self.align_panning     = False   # arrastrando con botón central (pan)
         self.align_pan_start   = (0, 0)
@@ -313,6 +332,7 @@ class BassKaraoke:
         self.sections    = []
         self.grace_notes = []
         self.notes_stats = {}   # cobertura del parser {has_tab, total_pitch, …}
+        self.measure_starts = []  # [[compás, start16], …] del MusicXML
 
         # ── Canciones ──────────────────────────────────────────────────
         self.song_menu_open = False
@@ -326,14 +346,45 @@ class BassKaraoke:
         self.score_tempo_map = [(0, BPM_ORIGINAL)]   # marcas de tempo del MusicXML
         self._bpm_map       = {}
         self._offset_map    = {}
+        self._song_start_map = {}
         self._tempo_maps    = {}
+        # ── Generación de partitura (canciones solo-audio, F7) ────────
+        self.gen_running        = False
+        self.gen_msg            = ""
+        self.gen_frac           = 0.0
+        self.gen_result         = None
+        self.gen_error          = ""
+        self.gen_notice         = False
+        self.gen_song_dir       = None
+        self.gen_barlen         = 3
+        self.gen_bars_per_chord = 2
+        self._gen_msg_timer     = 0.0
         self.songs          = self._scan_songs()
         self._piano_keys_list = []
 
         # ── Karaoke (acordes + letra, J para mostrar/ocultar) ───
         self.chord_events = []  # [(sec, "Sibm")] del <base>.chords.json
         self.lyric_events = []  # [(sec, "línea")] del <base>.chords.json
+        self.chord_barlen = 4   # tiempos por compás (del MusicXML o del JSON)
         self.chords_on    = True
+        self.chords_path  = ""
+
+        # ── Editor de acordes (Y) ─────────────────────────────────────
+        self.chord_edit_open   = False
+        self.chord_edit_sel    = 0
+        self.chord_edit_top    = 0
+        self.chord_edit_typing = False
+        self.chord_edit_buf    = ""
+        self.chord_edit_msg    = ""
+        self.chord_edit_dirty  = False
+
+        # ── Edición sobre la barra de acordes (clic en la tira) ────────
+        self.chord_bar_sel_measure    = None   # compás seleccionado
+        self.chord_bar_typing         = False
+        self.chord_bar_buf            = ""
+        self.chord_bar_target_sec     = None   # inicio del compás editado
+        self.chord_bar_target_end_sec = None   # inicio del siguiente compás
+        self.chord_bar_msg            = ""
 
         # ── Score pre-render ───────────────────────────────────────────
         self.score_renderer  = "verovio"
@@ -359,15 +410,17 @@ class BassKaraoke:
             print("[WARN] No hay canciones en songs/ — usando rutas por defecto")
             self._load_notes()
             self._load_mp3(self._find_mp3())
+            self._build_song_waveform()
             pygame.display.set_caption(f"Bass Karaoke v3  –  {self.song_name or 'sin canción'}")
 
-        if self.score_renderer == "music21" and MUSIC21_OK:
-            self._init_score_music21()
-        elif VEROVIO_OK and CAIROSVG_OK:
-            self._init_score_verovio()
-        elif MUSIC21_OK:
-            self.score_renderer = "music21"
-            self._init_score_music21()
+        if self.musicxml_path and self.notes:
+            if self.score_renderer == "music21" and MUSIC21_OK:
+                self._init_score_music21()
+            elif VEROVIO_OK and CAIROSVG_OK:
+                self._init_score_verovio()
+            elif MUSIC21_OK:
+                self.score_renderer = "music21"
+                self._init_score_music21()
 
         if INPUT_AVAILABLE and self.audio_devices:
             self._start_audio()
@@ -419,6 +472,10 @@ class BassKaraoke:
             self._offset_map = {}
         if self.song_name:
             self._offset_map[self.song_name] = self.mp3_offset_sec
+        if not hasattr(self, "_song_start_map") or not self._song_start_map:
+            self._song_start_map = {}
+        if self.song_name:
+            self._song_start_map[self.song_name] = self.song_start_sec
         if not hasattr(self, "_tempo_maps") or not self._tempo_maps:
             self._tempo_maps = {}
         if self.song_name:
@@ -431,12 +488,15 @@ class BassKaraoke:
             "bpm_map":           self._bpm_map,
             "mp3_offset_sec":    self.mp3_offset_sec,
             "mp3_offset_map":    self._offset_map,
+            "song_start_map":    self._song_start_map,
             "tempo_maps":        self._tempo_maps,
             "device_idx":        self.device_idx,
             "muted":             self.muted,
             "pitch_method":      self.pitch_method,
             "countdown_enabled": self.countdown_enabled,
             "score_renderer":    self.score_renderer,
+            "gen_barlen":        self.gen_barlen,
+            "gen_bars_per_chord": self.gen_bars_per_chord,
             "song":              self.song_name,
         }
         try:
@@ -469,6 +529,8 @@ class BassKaraoke:
                 self.pitch_method   = saved_method
                 self.pitch_menu_sel = PITCH_METHODS.index(saved_method)
             self.countdown_enabled = bool(cfg.get("countdown_enabled", self.countdown_enabled))
+            self.gen_barlen         = int(cfg.get("gen_barlen", self.gen_barlen))
+            self.gen_bars_per_chord = int(cfg.get("gen_bars_per_chord", self.gen_bars_per_chord))
             saved_renderer = cfg.get("score_renderer", self.score_renderer)
             if saved_renderer in ("verovio", "music21"):
                 self.score_renderer = saved_renderer
@@ -480,6 +542,7 @@ class BassKaraoke:
                         break
             self._bpm_map = cfg.get("bpm_map", {}) or {}
             self._offset_map = cfg.get("mp3_offset_map", {}) or {}
+            self._song_start_map = cfg.get("song_start_map", {}) or {}
             self._tempo_maps = cfg.get("tempo_maps", {}) or {}
             print(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s  "
                   f"pitch={self.pitch_method}  renderer={self.score_renderer}  "
@@ -491,7 +554,7 @@ class BassKaraoke:
     #  CANCIONES / NOTAS / MP3
     # ══════════════════════════════════════════════════════════════════
     def _scan_songs(self):
-        """Escanea songs/ y devuelve lista de canciones con musicxml."""
+        """Escanea songs/: con MusicXML o solo audio (pendiente de generar)."""
         songs = []
         if not os.path.isdir(SONGS_DIR):
             return songs
@@ -500,18 +563,26 @@ class BassKaraoke:
             if not os.path.isdir(folder) or entry.startswith("."):
                 continue
             musicxml = self._find_file(folder, ".musicxml")
-            if not musicxml:
+            audio = None
+            for ext in (".mp3", ".wav", ".flac", ".ogg", ".m4a"):
+                audio = self._find_file(folder, ext)
+                if audio:
+                    break
+            if not musicxml and not audio:
                 continue
             name = entry.replace("_", " ").replace("-", " ").title()
             songs.append({
-                "name":     name,
-                "dir":      folder,
-                "musicxml": musicxml,
-                "tg":       self._find_file(folder, ".tg"),
-                "mp3":      self._find_file(folder, ".mp3"),
+                "name":       name,
+                "dir":        folder,
+                "musicxml":   musicxml,
+                "tg":         self._find_file(folder, ".tg"),
+                "mp3":        self._find_file(folder, ".mp3"),
+                "audio":      audio,
+                "audio_only": musicxml is None,
             })
-            print(f"[Canción] {name:24s}  {os.path.basename(musicxml)}  "
-                  f"mp3={'SÍ' if songs[-1]['mp3'] else 'no'}")
+            print(f"[Canción] {name:24s}  "
+                  f"xml={'SÍ' if musicxml else 'NO (F7)'}  "
+                  f"audio={'SÍ' if audio else 'no'}")
         return songs
 
     @staticmethod
@@ -534,23 +605,49 @@ class BassKaraoke:
         song = self.songs[idx]
         self.song_idx      = idx
         self.song_name     = song["name"]
-        self.musicxml_path = song["musicxml"]
+        self.musicxml_path = song["musicxml"] or ""
         self.tg_path       = song["tg"] or TG_PATH
-        self._load_notes()
-        self._load_mp3(song["mp3"])
+        self.gen_notice    = bool(song.get("audio_only"))
+        if self.musicxml_path:
+            self._load_notes()
+        else:
+            self.notes          = []
+            self.sections       = []
+            self.notes_stats    = {}
+            self.section_stats  = {}
+            self.measure_starts = []
+            self.grace_notes    = {}
+            self.beats_per_bar  = 4
+            self.tempo_map      = [(0, self.bpm, "quarter")]
+            self.score_tempo_map = [list(x) for x in self.tempo_map]
+            print(f"[Gen] {self.song_name}: sin partitura — pulsa F7 para generarla")
+        self._load_mp3(song.get("audio") or song["mp3"])
+        self._build_song_waveform()
         self.reiniciar()
         # Karaoke (acordes + letra): <base>.chords.json junto al musicxml
         self.chord_events = []
         self.lyric_events = []
-        try:
-            base, _ = os.path.splitext(self.musicxml_path)
-            self.chord_events, self.lyric_events = load_song_map(
-                base + ".chords.json")
-            if self.chord_events or self.lyric_events:
-                print(f"[OK] Karaoke: {len(self.chord_events)} acordes, "
-                      f"{len(self.lyric_events)} líneas")
-        except Exception as e:
-            print(f"[Karaoke WARN] {e}")
+        self.chords_path  = ""
+        if self.musicxml_path:
+            try:
+                base, _ = os.path.splitext(self.musicxml_path)
+                self.chords_path = base + ".chords.json"
+                self.chord_events, self.lyric_events = load_song_map(
+                    self.chords_path)
+                self.chord_barlen = load_song_barlen(self.chords_path,
+                                                     default=self.beats_per_bar)
+                if self.chord_events or self.lyric_events:
+                    print(f"[OK] Karaoke: {len(self.chord_events)} acordes, "
+                          f"{len(self.lyric_events)} líneas")
+            except Exception as e:
+                print(f"[Karaoke WARN] {e}")
+        self.chord_edit_dirty     = False
+        self.chord_bar_sel_measure    = None
+        self.chord_bar_typing     = False
+        self.chord_bar_buf        = ""
+        self.chord_bar_target_sec = None
+        self.chord_bar_target_end_sec = None
+        self.chord_bar_msg        = ""
         # Re-generar partitura y estado dependiente de la canción
         self._score_cache    = {}
         self._score_surf     = None
@@ -578,10 +675,22 @@ class BassKaraoke:
         saved_offset = (self._offset_map or {}).get(self.song_name)
         if saved_offset is not None:
             self.mp3_offset_sec = float(saved_offset)
+        # Ancla de inicio de canción (compás 1). Sin valor guardado se deduce
+        # del tempo de la partitura (equivale al comportamiento de una ancla).
+        self.song_start_sec = self.mp3_offset_sec
+        saved_start = (self._song_start_map or {}).get(self.song_name)
+        if saved_start is not None:
+            self.song_start_sec = float(saved_start)
+        elif self.notes:
+            self.song_start_sec = (self.mp3_offset_sec
+                                   - self._song_seconds(self._bass_start16()))
+        self._clamp_anchors()
         if caption:
             pygame.display.set_caption(f"Bass Karaoke v3  –  {self.song_name}")
-        if init_score:
+        if init_score and self.notes:
             self._init_score()
+        elif not self.notes:
+            self._score_surf = None
         print(f"[OK] Canción cargada: {self.song_name}")
 
     def _load_notes(self):
@@ -593,6 +702,8 @@ class BassKaraoke:
             self.notes         = notes
             self.sections      = sections
             self.notes_stats   = stats
+            self.beats_per_bar = int(stats.get("beats_per_bar", 4) or 4)
+            self.measure_starts = stats.get("measure_starts", []) or []
             self.tempo_map     = tempo_map or [(0, bpm, "quarter")]
             self.score_tempo_map = [list(x) for x in self.tempo_map]
             self.bpm           = bpm
@@ -604,7 +715,7 @@ class BassKaraoke:
                 if sec not in self.section_stats:
                     self.section_stats[sec] = {"ok": 0, "total": 0}
             print(f"[OK] MusicXML: {len(notes)} notas, {bpm} BPM  "
-                  f"graces={len(self.grace_notes)}")
+                  f"compás={self.beats_per_bar}/4  graces={len(self.grace_notes)}")
         except Exception as e:
             print(f"[ERROR] MusicXML: {e}")
             import traceback; traceback.print_exc()
@@ -628,6 +739,71 @@ class BassKaraoke:
         except Exception as e:
             print(f"[WARN] pygame.mixer: {e}")
 
+    # ── Generación de partitura desde audio (F7) ─────────────────────
+    def _start_generation(self):
+        if self.gen_running:
+            return
+        song = self.songs[self.song_idx]
+        self.gen_running  = True
+        self.gen_msg      = "Preparando…"
+        self.gen_frac     = 0.0
+        self.gen_error    = ""
+        self.gen_result   = None
+        self.gen_song_dir = song["dir"]
+        self.gen_notice   = False
+        print(f"[Gen] Transcribiendo {self.song_name} (barlen={self.gen_barlen})…")
+
+        def progress(msg, frac=None):
+            self.gen_msg = msg
+            if frac is not None:
+                self.gen_frac = float(frac)
+
+        def worker():
+            try:
+                from .transcribe import transcribe_song
+                self.gen_result = transcribe_song(
+                    self.gen_song_dir,
+                    barlen=self.gen_barlen,
+                    bars_per_chord=self.gen_bars_per_chord,
+                    progress_cb=progress)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                self.gen_error = str(e)
+            finally:
+                self.gen_running = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _poll_generation(self):
+        if self.gen_running or self.gen_result is None:
+            return
+        res = self.gen_result
+        self.gen_result = None
+        self.gen_frac = 1.0
+        self.songs = self._scan_songs()
+        target = os.path.normcase(os.path.normpath(self.gen_song_dir or ""))
+        idx = 0
+        for i, s in enumerate(self.songs):
+            if os.path.normcase(os.path.normpath(s["dir"])) == target:
+                idx = i
+                break
+        self._load_song(idx)
+        off = float(res.get("suggested_offset", 0.0) or 0.0)
+        self.mp3_offset_sec = off
+        self._offset_map[self.song_name] = off
+        # Si el inicio de canción no estaba fijado a mano, recolocarlo con el
+        # offset nuevo (la partitura regenerada puede tener otro primer s16).
+        if (self._song_start_map or {}).get(self.song_name) is None:
+            self.song_start_sec = (off
+                                   - self._song_seconds(self._bass_start16()))
+        self._clamp_anchors()
+        self._remember_anchors()
+        self._save_config()
+        self.gen_msg = (f"Partitura generada: {res.get('notes', 0)} notas · "
+                        f"{res.get('measures', 0)} compases · {res.get('bpm', 0)} BPM")
+        self._gen_msg_timer = 8.0
+        print(f"[Gen] {self.gen_msg}  offset={off:+.2f}s")
+
     def _init_score(self):
         if self.score_renderer == "music21" and MUSIC21_OK:
             self._init_score_music21()
@@ -640,7 +816,8 @@ class BassKaraoke:
     def _find_mp3(self):
         """(fallback) Busca cualquier MP3 en la carpeta de la canción actual."""
         if self.song_idx < len(self.songs):
-            return self.songs[self.song_idx]["mp3"]
+            s = self.songs[self.song_idx]
+            return s.get("audio") or s["mp3"]
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         for folder in [os.path.join(base, "songs", "mitab"), base]:
             if os.path.isdir(folder):
@@ -808,6 +985,82 @@ class BassKaraoke:
         editor (offset) marca el instante del MP3 donde suena esta nota."""
         return float(self.notes[0]["start16"]) if self.notes else 0.0
 
+    def grid_phase16(self):
+        bar16 = max(4, int(self.beats_per_bar) * 4)
+        return int(self._bass_start16()) % bar16
+
+    def _clamp_anchors(self):
+        """Mantiene 0 <= inicio_canción <= entrada_bajo - 20 ms."""
+        self.mp3_offset_sec = max(0.0, float(getattr(self, "mp3_offset_sec", 0.0)))
+        self.song_start_sec = max(0.0, float(getattr(self, "song_start_sec", 0.0)))
+        if self.song_start_sec > self.mp3_offset_sec - 0.02:
+            self.song_start_sec = max(0.0, self.mp3_offset_sec - 0.02)
+
+    def _remember_anchors(self):
+        if self.song_name:
+            self._offset_map[self.song_name]     = self.mp3_offset_sec
+            self._song_start_map[self.song_name] = self.song_start_sec
+
+    def _anchor_pair(self, bass_sec=None, tmap=None):
+        """(inicio_canción, entrada_bajo) efectivos en segundos del MP3."""
+        bass = max(0.0, float(self.mp3_offset_sec if bass_sec is None else bass_sec))
+        start = max(0.0, float(getattr(self, "song_start_sec", 0.0)))
+        start = min(start, max(0.0, bass - 0.02))
+        return start, bass
+
+    def _lead_qpm(self, tmap=None):
+        """Tempo efectivo del silencio inicial (compás 1 -> primera nota)."""
+        s0 = self._bass_start16()
+        if s0 <= 0:
+            return self._tempo_at(s0, tmap)
+        raw_s0 = self._song_seconds(s0, tmap)
+        start, bass = self._anchor_pair(tmap=tmap)
+        lead = bass - start
+        if lead <= 0.02 or raw_s0 <= 1e-9:
+            return self._tempo_at(s0, tmap)
+        return (s0 / 4.0) * 60.0 / lead
+
+    def _eff_seconds(self, s16, bass_sec=None, tmap=None):
+        """Instante del MP3 de una posición de partitura con DOS anclas:
+        s16=0 -> song_start_sec y s16=s0 -> mp3_offset_sec. El tramo inicial
+        (silencio/lead-in) se estira; el resto conserva el tempo del mapa."""
+        tmap = self.tempo_map if tmap is None else tmap
+        start, bass = self._anchor_pair(bass_sec, tmap)
+        s0 = self._bass_start16()
+        raw = self._song_seconds(s16, tmap)
+        if s0 <= 1e-9:
+            return bass + raw
+        raw_s0 = self._song_seconds(s0, tmap)
+        if raw_s0 <= 1e-9:
+            return bass + raw
+        lead = bass - start
+        if lead <= 1e-6:
+            return start if s16 <= s0 else bass + (raw - raw_s0)
+        if s16 <= s0:
+            return start + (raw / raw_s0) * lead
+        return bass + (raw - raw_s0)
+
+    def _eff_seconds_inverse(self, sec, bass_sec=None, tmap=None):
+        """Inverso de _eff_seconds: instante del MP3 -> start16."""
+        tmap = self.tempo_map if tmap is None else tmap
+        start, bass = self._anchor_pair(bass_sec, tmap)
+        s0 = self._bass_start16()
+        if s0 <= 1e-9:
+            return self._song_seconds_inverse(max(0.0, sec - bass), tmap)
+        raw_s0 = self._song_seconds(s0, tmap)
+        if raw_s0 <= 1e-9:
+            return self._song_seconds_inverse(max(0.0, sec - bass), tmap)
+        lead = bass - start
+        if lead <= 1e-6:
+            if sec <= bass:
+                return 0.0
+            return self._song_seconds_inverse(raw_s0 + (sec - bass), tmap)
+        if sec <= start:
+            return 0.0
+        if sec <= bass:
+            return self._song_seconds_inverse((sec - start) / lead * raw_s0, tmap)
+        return self._song_seconds_inverse(raw_s0 + (sec - bass), tmap)
+
     def _song_seconds(self, beat16, tmap=None):
         """Segundos reales de la canción (a tempo original) desde el inicio
         hasta beat16, respetando los cambios de tempo del mapa.
@@ -846,20 +1099,15 @@ class BassKaraoke:
 
     def _mp3_sec_of_s16(self, s16, offset=None, tmap=None):
         """Posición MP3 (segundos) de una posición de partitura start16.
-        La línea roja (offset) = PRIMERA nota del bajo."""
+        Con dos anclas: s16=0 -> song_start_sec y s16=s0 -> offset (primera
+        nota del bajo). El silencio inicial se estira entre ambas."""
         offset = self.mp3_offset_sec if offset is None else offset
-        tmap   = tmap if tmap is not None else self.tempo_map
-        return (offset + self._song_seconds(s16, tmap)
-                - self._song_seconds(self._bass_start16(), tmap))
+        return self._eff_seconds(s16, offset, tmap)
 
     def _beat16_at_mp3sec(self, mp3_sec, offset=None, tmap=None):
-        """Inverso de _mp3_sec_of_s16: instante del MP3 -> start16.
-        Anclado a la primera nota del bajo (línea roja = offset)."""
-        offset  = self.ed_offset if offset is None else offset
-        tmap    = tmap if tmap is not None else self.tempo_map
-        S       = self._bass_start16()
-        abs_sec = self._song_seconds(S, tmap) + (mp3_sec - offset)
-        return self._song_seconds_inverse(abs_sec, tmap)
+        """Inverso de _mp3_sec_of_s16: instante del MP3 -> start16."""
+        offset = self.mp3_offset_sec if offset is None else offset
+        return self._eff_seconds_inverse(mp3_sec, offset, tmap)
 
     # ══════════════════════════════════════════════════════════════════
     #  EDITOR DE ALINEACIÓN MP3 (W)
@@ -883,6 +1131,7 @@ class BassKaraoke:
         self.align_view_span  = self.align_total_sec
         self.align_cursor_sec = self.ed_offset
         self.align_playing    = False
+        self.align_dragging_start = False
         self.align_detecting  = False
         self.align_detected_tempo = None
         self.align_onsets     = None
@@ -949,6 +1198,7 @@ class BassKaraoke:
     def _close_align_editor(self, apply=True):
         self.align_editor_open = False
         self.align_dragging    = False
+        self.align_dragging_start = False
         self.align_drag_marker = None
         if self.align_playing:
             self.align_playing = False
@@ -963,8 +1213,10 @@ class BassKaraoke:
         self.bpm_original   = new_initial
         if abs(self.bpm - old_initial) < 0.01:
             self.bpm = new_initial
+        self._clamp_anchors()
         if self.song_name:
             self._offset_map[self.song_name] = self.mp3_offset_sec
+            self._song_start_map[self.song_name] = self.song_start_sec
             self._tempo_maps[self.song_name] = [
                 [int(e[0]), round(e[1], 2), (e[2] if len(e) >= 3 else "quarter")]
                 for e in self.tempo_map
@@ -973,14 +1225,15 @@ class BassKaraoke:
         print(f"[Alineación] offset={self.mp3_offset_sec:+.2f}s  "
               f"tempo_map={self.tempo_map}")
 
-    def _align_build_waveform(self):
+    def _build_song_waveform(self):
         """Rejilla fina min/max de TODO el MP3, calculada una sola vez.
-        El zoom/pan solo recorta qué columnas se dibujan."""
+        La comparten la franja de waveform de la vista principal y el editor
+        de alineación (W)."""
         import numpy as _np
         vsp = self._vsp
-        self.align_wave = None
-        self.align_wave_n = 0
-        self.align_total_sec = 0.0
+        self.song_wave      = None
+        self.song_wave_n    = 0
+        self.song_total_sec = 0.0
         arr = None
         sr = 0
         if vsp and vsp.loaded and vsp.data_orig is not None:
@@ -990,22 +1243,38 @@ class BassKaraoke:
             arr, sr = load_mp3_samples(self.mp3_path)
         if arr is None or sr <= 0:
             return
-        self.align_total_sec = len(arr) / float(sr)
+        self.song_total_sec = len(arr) / float(sr)
         n = len(arr)
         n_grid = min(20000, max(1, n // 4))
         if n <= n_grid:
             col_min = arr
             col_max = arr
-            self.align_wave_n = n
+            self.song_wave_n = n
         else:
             step = n // n_grid
             g = arr[: n_grid * step].reshape(n_grid, step)
             col_min = g.min(axis=1)
             col_max = g.max(axis=1)
-            self.align_wave_n = n_grid
+            self.song_wave_n = n_grid
         peak = max(float(_np.abs(col_max).max()),
                    float(_np.abs(col_min).max()), 1e-9)
-        self.align_wave = (col_min / peak, col_max / peak)
+        col_min = col_min / peak
+        col_max = col_max / peak
+        # Realce suave (gamma) para que los ataques del bajo se lean aunque el
+        # pico global de la canción sea mucho mayor que el fragmento visible.
+        _g = 0.7
+        col_min = _np.sign(col_min) * _np.abs(col_min) ** _g
+        col_max = _np.sign(col_max) * _np.abs(col_max) ** _g
+        self.song_wave = (col_min, col_max)
+
+    def _align_build_waveform(self):
+        """Rejilla fina min/max de TODO el MP3, calculada una sola vez.
+        El zoom/pan solo recorta qué columnas se dibujan."""
+        if getattr(self, "song_wave", None) is None:
+            self._build_song_waveform()
+        self.align_wave      = self.song_wave
+        self.align_wave_n    = self.song_wave_n
+        self.align_total_sec = self.song_total_sec
 
     @staticmethod
     def _align_entry(e):
@@ -1088,8 +1357,11 @@ class BassKaraoke:
         return active
 
     def _align_set_offset_from_mouse(self, pos):
-        new_off = round(self._align_sec_of_pos(pos), 2)
+        new_off = max(0.0, round(self._align_sec_of_pos(pos), 2))
         if self.ed_offset != new_off:
+            # El inicio de canción no puede quedar después de la entrada.
+            if self.song_start_sec > new_off - 0.02:
+                self.song_start_sec = max(0.0, new_off - 0.02)
             # Las marcas que aún siguen "lo que dice la partitura" se mueven
             # con la línea roja; las fijadas a mano se quedan donde están.
             for e in self.ed_tempo_map:
@@ -1098,6 +1370,18 @@ class BassKaraoke:
                                                       self.score_tempo_map), 2)
             self.ed_offset = new_off
         self.align_cursor_sec = self.ed_offset
+
+    def _align_set_song_start_from_mouse(self, pos):
+        """Mueve el ancla verde (compás 1); la entrada del bajo no se toca."""
+        sec = max(0.0, min(self._align_sec_of_pos(pos),
+                           max(0.0, self.ed_offset - 0.02)))
+        self.song_start_sec = round(sec, 2)
+        s0 = self._bass_start16()
+        for e in self.ed_tempo_map:
+            if len(e) >= 4 and e[3] is not None and float(e[3]) <= s0:
+                e[0] = round(self._mp3_sec_of_s16(float(e[3]), self.ed_offset,
+                                                  self.score_tempo_map), 2)
+        self.align_cursor_sec = self.song_start_sec
 
     def _align_add_marker(self, pos):
         if self.align_total_sec <= 0:
@@ -1163,6 +1447,9 @@ class BassKaraoke:
             d = abs(x - self._align_px_of_sec(sec))
             if d < best_d:
                 best_d, best = d, ("ghost", i)
+        ds = abs(x - self._align_px_of_sec(self.song_start_sec))
+        if ds <= best_d and ds <= 12:
+            best_d, best = ds, ("start", None)
         dl = abs(x - self._align_px_of_sec(self.ed_offset))
         if dl <= best_d:
             best = ("red", None)
@@ -1642,8 +1929,27 @@ class BassKaraoke:
     # ══════════════════════════════════════════════════════════════════
     #  CONTROLES
     # ══════════════════════════════════════════════════════════════════
+    def _total16(self):
+        if not self.notes:
+            return 0
+        return int(self.notes[-1]["start16"] + self.notes[-1]["dur"])
+
+    def bar_starts16(self):
+        """Inicios de compás (start16) para la rejilla visual y el snap.
+
+        Usa los compases reales del MusicXML (respeta anacrusas/cambios de
+        compás); si no hay, cae a múltiplos de `beats_per_bar` tiempos.
+        """
+        if self.measure_starts:
+            return sorted({int(s) for _n, s in self.measure_starts})
+        bar16 = max(4, int(self.beats_per_bar) * 4)
+        return list(range(0, self._total16() + 1, bar16))
+
     def _measure_starts(self):
         """Devuelve lista ordenada de posiciones start16 del inicio de cada compás."""
+        bars = self.bar_starts16()
+        if bars:
+            return bars
         seen = {}
         for note in self.notes:
             m = note["measure_num"]
@@ -1714,13 +2020,20 @@ class BassKaraoke:
         else:
             if self.countdown_enabled:
                 self.counting_down  = True
-                self.countdown_beat = 4
+                self.countdown_beat = self.beats_per_bar
                 self.countdown_timer = 0.0
             else:
                 self._begin_play()
 
     def _begin_play(self):
         self.playing = True
+        # Click del tiempo de arranque si empezamos justo en un tiempo: sin esto
+        # el primer click audible sería el tiempo 2 (el 1 no tiene transición).
+        q = self.beat_time / 4.0
+        if abs(q - round(q)) < 0.15:
+            self.metro_beat  = int(round(q)) % self.beats_per_bar
+            self.metro_flash = 1.0
+            self._play_click(self.metro_beat == 0)
         if not self.muted:
             offset = self._mp3_sec_of_s16(self.beat_time)
             self._play_mp3(offset)
@@ -1775,7 +2088,19 @@ class BassKaraoke:
             d["ok"] = 0; d["total"] = 0
 
     def ajustar_offset(self, delta):
+        """Mueve SOLO la entrada del bajo (línea roja): el inicio de canción
+        queda fijo y se estira/encoge el silencio inicial."""
         self.mp3_offset_sec += delta
+        self._clamp_anchors()
+        if self.playing:
+            offset = self._mp3_sec_of_s16(self.beat_time)
+            self._stop_mp3()
+            self._play_mp3(offset)
+
+    def ajustar_inicio(self, delta):
+        """Mueve SOLO el inicio de canción / compás 1 (línea verde)."""
+        self.song_start_sec += delta
+        self._clamp_anchors()
         if self.playing:
             offset = self._mp3_sec_of_s16(self.beat_time)
             self._stop_mp3()
@@ -1814,6 +2139,9 @@ class BassKaraoke:
     # ══════════════════════════════════════════════════════════════════
     def update(self, dt):
         self._t += dt
+        self._poll_generation()
+        if self._gen_msg_timer > 0:
+            self._gen_msg_timer = max(0.0, self._gen_msg_timer - dt)
         if self._config_msg_timer > 0:
             self._config_msg_timer = max(0.0, self._config_msg_timer - dt)
         if self.preview_timer > 0:
@@ -1925,7 +2253,7 @@ class BassKaraoke:
             if self.countdown_timer >= beat_sec:
                 self.countdown_timer -= beat_sec
                 self.metro_flash = 1.0
-                self.metro_beat  = (4 - self.countdown_beat) % 4
+                self.metro_beat  = (self.beats_per_bar - self.countdown_beat) % self.beats_per_bar
                 self._play_click(self.metro_beat == 0, force=True)  # siempre suena
                 self.countdown_beat -= 1
                 if self.countdown_beat <= 0:
@@ -1936,15 +2264,17 @@ class BassKaraoke:
         if not self.playing:
             return
 
-        # Avance en corcheas 16: sigue el tempo vigente del mapa × ajuste global
-        seg_tempo = self._tempo_at(self.beat_time)
+        # Avance en corcheas 16: sigue el tempo vigente del mapa × ajuste global.
+        # En el silencio inicial manda el tempo derivado de las dos anclas.
+        s0 = self._bass_start16()
+        seg_tempo = self._lead_qpm() if self.beat_time < s0 else self._tempo_at(self.beat_time)
         delta16 = dt * (seg_tempo * self._speed_ratio() / 60.0) * 4.0
         self.beat_time += delta16
 
         prev_q = int((self.beat_time - delta16) / 4)
         cur_q  = int(self.beat_time / 4)
         if cur_q > prev_q:
-            self.metro_beat  = cur_q % 4
+            self.metro_beat  = cur_q % self.beats_per_bar
             self.metro_flash = 1.0
             self._play_click(self.metro_beat == 0)
         self.metro_flash = max(0.0, self.metro_flash - dt * 5)
@@ -2000,6 +2330,7 @@ class BassKaraoke:
         self._draw_header()
         if self.chords_on and (self.chord_events or self.lyric_events):
             draw_karaoke_strip(self)
+        draw_waveform_strip(self)
         draw_tab(self)
         draw_score(self)
         draw_guitartab(self)
@@ -2040,7 +2371,68 @@ class BassKaraoke:
             draw_help(self)
         if self.align_editor_open:
             self._draw_align_editor()
+        if self.chord_edit_open:
+            self._draw_chord_editor()
+        self._draw_gen_overlay()
         pygame.display.flip()
+
+    def _draw_gen_overlay(self):
+        cx = W // 2
+        if self.gen_running or self.gen_error:
+            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+            overlay.fill((8, 10, 16, 225))
+            self.screen.blit(overlay, (0, 0))
+        if self.gen_running:
+            t = self.font_big.render("Generando partitura desde el audio…",
+                                     True, C_ACCENT)
+            self.screen.blit(t, t.get_rect(center=(cx, H // 2 - 70)))
+            sub = self.font_med.render(self.song_name, True, C_GRAY)
+            self.screen.blit(sub, sub.get_rect(center=(cx, H // 2 - 30)))
+            msg = self.font_med.render(self.gen_msg, True, (235, 235, 240))
+            self.screen.blit(msg, msg.get_rect(center=(cx, H // 2 + 15)))
+            bw, bh = 540, 14
+            bx, by = cx - bw // 2, H // 2 + 55
+            pygame.draw.rect(self.screen, (40, 44, 54),
+                             (bx, by, bw, bh), border_radius=7)
+            fw = int(bw * max(0.0, min(1.0, self.gen_frac)))
+            if fw > 0:
+                pygame.draw.rect(self.screen, C_ACCENT,
+                                 (bx, by, fw, bh), border_radius=7)
+            hint = self.font_small.render("No cierres la app…", True, C_GRAY)
+            self.screen.blit(hint, hint.get_rect(center=(cx, by + bh + 24)))
+        elif self.gen_error:
+            t = self.font_big.render("No se pudo generar la partitura",
+                                     True, C_ERR)
+            self.screen.blit(t, t.get_rect(center=(cx, H // 2 - 50)))
+            msg = self.font_med.render(self.gen_error[:110],
+                                       True, (255, 170, 170))
+            self.screen.blit(msg, msg.get_rect(center=(cx, H // 2 + 5)))
+            hint = self.font_small.render(
+                "Pulsa cualquier tecla para continuar", True, C_GRAY)
+            self.screen.blit(hint, hint.get_rect(center=(cx, H // 2 + 45)))
+        elif self._gen_msg_timer > 0:
+            box = pygame.Rect(0, 0, 720, 44)
+            box.center = (cx, H - 46)
+            bg = pygame.Surface(box.size, pygame.SRCALPHA)
+            bg.fill((24, 70, 44, 230))
+            self.screen.blit(bg, box.topleft)
+            pygame.draw.rect(self.screen, (70, 210, 130), box, 2,
+                             border_radius=8)
+            msg = self.font_med.render(self.gen_msg, True, (220, 255, 230))
+            self.screen.blit(msg, msg.get_rect(center=box.center))
+        elif self.gen_notice and not self.notes:
+            box = pygame.Rect(0, 0, 780, 46)
+            box.center = (cx, H - 48)
+            bg = pygame.Surface(box.size, pygame.SRCALPHA)
+            bg.fill((60, 48, 16, 230))
+            self.screen.blit(bg, box.topleft)
+            pygame.draw.rect(self.screen, (235, 200, 90), box, 2,
+                             border_radius=8)
+            msg = self.font_med.render(
+                f"Canción sin partitura — F7 generar ({self.gen_barlen}/4) · "
+                f"F8 cambiar compás",
+                True, (255, 240, 180))
+            self.screen.blit(msg, msg.get_rect(center=box.center))
 
     def _draw_align_editor(self):
         x0, w = self._align_x0, self._align_w
@@ -2058,15 +2450,16 @@ class BassKaraoke:
             "SPACE=play/pausa   F=analizar tempo (librosa)   "
             "rueda=zoom   botón central=pan   "
             "clic=mueve cursor   arrastra roja=inicio bajo   "
-            "arrastra verde=tempo (no mueve el inicio)   "
+            "arrastra verde gruesa=compás 1   verde fina=tempo   "
             "click der=añade marca   ↑/↓=BPM tramo   "
             "←/→=cursor ±1s   Supr=quitar   R=reset a la partitura   W/ESC=guardar",
             True, C_GRAY)
         self.screen.blit(help_t, (x0, 70))
         legend_t = self.font_small.render(
             "Leyenda:  banda verde = zona de transcripción   "
-            "roja = primera nota del bajo (se mueve con las marcas de partitura)   "
-            "verde = marcas de tempo (arrástralas a donde suenan)   "
+            "verde gruesa = inicio de canción (compás 1)   "
+            "roja = primera nota del bajo (independiente)   "
+            "verde fina = marcas de tempo (arrástralas a donde suenan)   "
             "cian Σ = donde indica la partitura (aparece al mover una marca)",
             True, (120, 170, 140))
         self.screen.blit(legend_t, (x0, 90))
@@ -2126,6 +2519,8 @@ class BassKaraoke:
 
         active = self._align_active_marker_sec()
         for e in self.ed_tempo_map:
+            if len(e) >= 4 and e[3] is not None and float(e[3]) == 0.0:
+                continue   # el compás 1 lo representa la línea verde "inicio"
             mp3, qpm = e[0], e[1]
             x = self._align_mark_px(mp3)
             col = C_GREEN if mp3 == active else (40, 200, 40)
@@ -2153,6 +2548,16 @@ class BassKaraoke:
         xc = self._align_px_of_sec(self.align_cursor_sec)
         pygame.draw.line(self.screen, C_WHITE, (xc, y0), (xc, y0 + h), 1)
 
+        xstart = self._align_px_of_sec(self.song_start_sec)
+        pygame.draw.line(self.screen, (70, 220, 120),
+                         (xstart, y0), (xstart, y0 + h), 3)
+        pygame.draw.polygon(self.screen, (70, 220, 120), [
+            (xstart - 5, y0 + 1), (xstart + 5, y0 + 1), (xstart, y0 + 8)])
+        self.screen.blit(
+            self.font_tiny.render(f"inicio {self.song_start_sec:.2f}s",
+                                  True, (70, 220, 120)),
+            (xstart + 5, y0 + 3))
+
         xr = self._align_px_of_sec(self.ed_offset)
         pygame.draw.line(self.screen, C_RED, (xr, y0), (xr, y0 + h), 3)
 
@@ -2169,7 +2574,8 @@ class BassKaraoke:
         zoom_str = (f"zoom x{self.align_total_sec / max(1e-6, self.align_view_span):.1f}"
                     if self.align_view_span < self.align_total_sec else "vista completa")
         info = self.font_small.render(
-            f"inicio bajo: {self.ed_offset:+.2f}s   cursor: {self.align_cursor_sec:.2f}s"
+            f"inicio canción: {self.song_start_sec:.2f}s"
+            f"   inicio bajo: {self.ed_offset:+.2f}s   cursor: {self.align_cursor_sec:.2f}s"
             f"   tempo activo: {self._tempo_at(cur_b, smap):.0f} BPM"
             f"   partitura: {score_init:.0f} BPM"
             f"   {zoom_str}   {det_str}   {play_str}",
@@ -2230,6 +2636,295 @@ class BassKaraoke:
         self.screen.blit(st, (W - 155, 36))
 
     # ══════════════════════════════════════════════════════════════════
+    #  EDITOR DE ACORDES (Y) — corregir acordes por compás y guardar
+    # ══════════════════════════════════════════════════════════════════
+    def _chord_edit_rows(self):
+        """[(nº de compás, start16)] para el editor; cae a compases del mapa."""
+        rows = list(self.measure_starts or [])
+        if rows:
+            return rows
+        bar16 = max(4, int(self.beats_per_bar or 4) * 4)
+        n = max(1, (int(self._score_total16 or 1) + bar16 - 1) // bar16)
+        return [[i + 1, i * bar16] for i in range(n)]
+
+    def _chord_edit_sec(self, s16):
+        try:
+            return round(float(self._song_seconds(float(s16))), 2)
+        except Exception:
+            return 0.0
+
+    def _chord_edit_name_at(self, sec, default="—"):
+        name = default
+        for s, n in self.chord_events:
+            if float(s) <= sec + 1e-6:
+                name = n
+            else:
+                break
+        return name
+
+    def _chord_edit_index_at(self, sec, tol=0.06):
+        for i, (s, _n) in enumerate(self.chord_events):
+            if abs(float(s) - sec) <= tol:
+                return i
+        return -1
+
+    def _chord_edit_apply(self, s16, name):
+        """Fija el acorde del compás; vacío = heredar (borra el evento)."""
+        sec  = self._chord_edit_sec(s16)
+        name = (name or "").strip()
+        idx  = self._chord_edit_index_at(sec)
+        if not name:
+            if idx >= 0:
+                del self.chord_events[idx]
+                self.chord_edit_dirty = True
+            return
+        if idx >= 0:
+            if self.chord_events[idx][1] != name:
+                self.chord_events[idx] = [sec, name]
+                self.chord_edit_dirty = True
+        else:
+            self.chord_events.append([sec, name])
+            self.chord_events.sort(key=lambda e: float(e[0]))
+            self.chord_edit_dirty = True
+
+    def _toggle_chord_editor(self):
+        self.chord_edit_open = not self.chord_edit_open
+        if not self.chord_edit_open:
+            self.chord_edit_typing = False
+            return
+        self._close_modes()
+        self.help_open = False
+        self.device_menu_open = self.pitch_menu_open = False
+        self.song_menu_open = self.feature_menu_open = self.tuner_open = False
+        self.chord_edit_typing = False
+        self.chord_edit_buf    = ""
+        self.chord_edit_msg    = ""
+        self._chord_bar_clear()
+        self.chord_bar_msg     = ""
+        rows = self._chord_edit_rows()
+        sel  = 0
+        for i, (_num, s16) in enumerate(rows):
+            if s16 <= self.beat_time:
+                sel = i
+            else:
+                break
+        self.chord_edit_sel = max(0, min(sel, len(rows) - 1))
+        self.chord_edit_top = max(0, self.chord_edit_sel - 8)
+
+    def _save_chords(self):
+        """Escribe <base>.chords.json (con .bak). Devuelve (ok, mensaje)."""
+        path = self.chords_path
+        if not path:
+            return False, "No hay ruta .chords.json"
+        try:
+            if os.path.exists(path):
+                with open(path, "rb") as fsrc:
+                    data = fsrc.read()
+                with open(path + ".bak", "wb") as fdst:
+                    fdst.write(data)
+            save_song_map(path, self.chord_events, self.lyric_events,
+                          self.chord_barlen)
+            self.chord_edit_dirty = False
+            print(f"[Acordes] guardado {path}")
+            return True, f"Guardado: {os.path.basename(path)}"
+        except Exception as e:
+            return False, f"Error al guardar: {e}"
+
+    def _chord_edit_save(self):
+        _ok, msg = self._save_chords()
+        self.chord_edit_msg = msg
+
+    # ══════════════════════════════════════════════════════════════════
+    #  EDICIÓN POR COMPÁS EN LA BARRA DE ACORDES (clic → Enter/Supr)
+    # ══════════════════════════════════════════════════════════════════
+    def _chord_bar_cells(self):
+        from .ui.draw_karaoke import chord_measure_cells
+        return chord_measure_cells(self)
+
+    def _chord_bar_snapshot(self):
+        return [(float(s), str(n)) for s, n in self.chord_events]
+
+    def _chord_bar_index_at(self, sec, tol=0.05):
+        for i, (s, _n) in enumerate(self.chord_events):
+            if abs(float(s) - float(sec)) <= tol:
+                return i
+        return None
+
+    def _chord_bar_prev_name(self, sec):
+        """Acorde vigente justo ANTES del inicio del compás."""
+        name = ""
+        for s, n in self.chord_events:
+            if float(s) < float(sec) - 0.05:
+                name = str(n)
+            else:
+                break
+        return name
+
+    def _chord_bar_clear(self):
+        self.chord_bar_sel_measure    = None
+        self.chord_bar_typing         = False
+        self.chord_bar_buf            = ""
+        self.chord_bar_target_sec     = None
+        self.chord_bar_target_end_sec = None
+
+    def _chord_bar_selected_cell(self):
+        cells = self._chord_bar_cells()
+        idx = self.chord_bar_sel_measure
+        if idx is None or not (0 <= idx < len(cells)):
+            return None
+        return cells[idx]
+
+    def _chord_bar_edit_selected(self):
+        """Empieza a editar el acorde vigente del compás seleccionado."""
+        cell = self._chord_bar_selected_cell()
+        if cell is None:
+            self.chord_bar_msg = "Selecciona un compás primero"
+            return
+        _i, _num, _raw, _v0, _v1, sec0, sec1, name, _ch = cell
+        self.chord_bar_typing         = True
+        self.chord_bar_buf            = name
+        self.chord_bar_target_sec     = float(sec0)
+        self.chord_bar_target_end_sec = float(sec1)
+        self.chord_bar_msg            = ""
+
+    def _chord_bar_commit(self):
+        """Aplica el nombre al compás: alinea el cambio al inicio del compás
+        y limpia los eventos que caían a mitad de compás."""
+        sec0 = self.chord_bar_target_sec
+        sec1 = self.chord_bar_target_end_sec
+        before = self._chord_bar_snapshot()
+        if sec0 is not None:
+            name = (self.chord_bar_buf or "").strip()
+            prev = self._chord_bar_prev_name(sec0)
+            if sec1 is not None and sec1 > sec0:
+                self.chord_events = [
+                    e for e in self.chord_events
+                    if not (sec0 + 0.05 < float(e[0]) < sec1 - 0.05)]
+            if not name or name == prev:
+                i = self._chord_bar_index_at(sec0)
+                if i is not None:
+                    del self.chord_events[i]
+            else:
+                i = self._chord_bar_index_at(sec0)
+                if i is not None:
+                    self.chord_events[i] = [sec0, name]
+                else:
+                    self.chord_events.append([sec0, name])
+                    self.chord_events.sort(key=lambda e: float(e[0]))
+        if self._chord_bar_snapshot() != before:
+            self.chord_edit_dirty = True
+        self.chord_bar_typing         = False
+        self.chord_bar_buf            = ""
+        self.chord_bar_target_sec     = None
+        self.chord_bar_target_end_sec = None
+
+    def _chord_bar_cancel(self):
+        self.chord_bar_typing         = False
+        self.chord_bar_buf            = ""
+        self.chord_bar_target_sec     = None
+        self.chord_bar_target_end_sec = None
+
+    def _chord_bar_delete(self):
+        """Quita el cambio de acorde del compás (hereda el anterior)."""
+        cell = self._chord_bar_selected_cell()
+        if cell is None:
+            self.chord_bar_msg = "Selecciona un compás primero"
+            return
+        _i, num, _raw, _v0, _v1, sec0, _s1, _name, _ch = cell
+        i = self._chord_bar_index_at(sec0)
+        if i is None:
+            self.chord_bar_msg = f"Compás {num}: ya hereda del anterior"
+            return
+        before = self._chord_bar_snapshot()
+        del self.chord_events[i]
+        if self._chord_bar_snapshot() != before:
+            self.chord_edit_dirty = True
+            self.chord_bar_msg = f"Compás {num}: cambio quitado"
+
+    def _chord_bar_click(self, pos):
+        """Clic en la tira: selecciona el compás bajo el cursor."""
+        from .ui.draw_karaoke import chord_measure_hit_test
+        hit = chord_measure_hit_test(self, pos)
+        if hit is None:
+            self._chord_bar_clear()
+            self.chord_bar_msg = ""
+            return False
+        idx, _cell = hit
+        self.chord_bar_typing         = False
+        self.chord_bar_buf            = ""
+        self.chord_bar_target_sec     = None
+        self.chord_bar_target_end_sec = None
+        self.chord_bar_sel_measure    = idx
+        self.chord_bar_msg            = ""
+        return True
+
+    def _draw_chord_editor(self):
+        ov = pygame.Surface((W, H), pygame.SRCALPHA)
+        ov.fill((8, 10, 16, 225))
+        self.screen.blit(ov, (0, 0))
+
+        mx, my, mw, mh = 70, 60, W - 140, H - 140
+        pygame.draw.rect(self.screen, C_PANEL, (mx, my, mw, mh),
+                         border_radius=12)
+        pygame.draw.rect(self.screen, C_ACCENT, (mx, my, mw, mh), 2,
+                         border_radius=12)
+
+        title = self.font_med.render("EDITOR DE ACORDES", True, C_ACCENT)
+        self.screen.blit(title, (mx + mw // 2 - title.get_width() // 2,
+                                 my + 12))
+        sub = ("↑/↓ compás  ·  Enter/T editar  ·  Supr borrar  ·  "
+               "Ctrl+S guardar  ·  Esc cerrar")
+        st = self.font_tiny.render(sub, True, C_GRAY)
+        self.screen.blit(st, (mx + 16, my + 42))
+        if self.chord_edit_dirty:
+            d = self.font_tiny.render("● cambios sin guardar", True, C_RED)
+            self.screen.blit(d, (mx + mw - d.get_width() - 16, my + 12))
+
+        rows   = self._chord_edit_rows()
+        rowh   = 22
+        list_y = my + 68
+        list_h = mh - 122
+        nrows  = max(1, list_h // rowh)
+        sel    = max(0, min(self.chord_edit_sel, len(rows) - 1))
+        self.chord_edit_sel = sel
+        if sel < self.chord_edit_top:
+            self.chord_edit_top = sel
+        tmax = max(0, len(rows) - nrows)
+        if sel >= self.chord_edit_top + nrows:
+            self.chord_edit_top = sel - nrows + 1
+        self.chord_edit_top = max(0, min(self.chord_edit_top, tmax))
+
+        clip = pygame.Rect(mx + 10, list_y, mw - 20, list_h)
+        self.screen.set_clip(clip)
+        for k in range(nrows):
+            i = self.chord_edit_top + k
+            if i >= len(rows):
+                break
+            num, s16 = rows[i]
+            sec   = self._chord_edit_sec(s16)
+            name  = self._chord_edit_name_at(sec)
+            start = self._chord_edit_index_at(sec) >= 0
+            y     = list_y + k * rowh
+            if i == sel:
+                pygame.draw.rect(self.screen, (40, 44, 70),
+                                 (clip.x, y, clip.w, rowh - 2),
+                                 border_radius=4)
+            if i == sel and self.chord_edit_typing:
+                label = f"C{num:>3}  {sec:7.2f}s   [ {self.chord_edit_buf} ]"
+            else:
+                label = f"C{num:>3}  {sec:7.2f}s   {name}"
+                if start:
+                    label += "   •"
+            col = C_ACCENT if i == sel else C_WHITE
+            self.screen.blit(self.font_small.render(label, True, col),
+                             (mx + 22, y + 3))
+        self.screen.set_clip(None)
+
+        if self.chord_edit_msg:
+            m = self.font_small.render(self.chord_edit_msg, True, C_GREEN)
+            self.screen.blit(m, (mx + 16, my + mh - 30))
+
+    # ══════════════════════════════════════════════════════════════════
     #  EVENT HANDLING
     # ══════════════════════════════════════════════════════════════════
     def handle_event(self, event):
@@ -2237,6 +2932,88 @@ class BassKaraoke:
             return False
 
         if event.type == pygame.KEYDOWN:
+            # ── Modal de generación de partitura ──────────────────────
+            if self.gen_running:
+                return True
+            if self.gen_error:
+                self.gen_error = ""
+                if self.songs:
+                    self.gen_notice = bool(
+                        self.songs[self.song_idx].get("audio_only"))
+                return True
+
+            # ── Editor de acordes (Y): intercepta todo el teclado ──────
+            if self.chord_edit_open:
+                rows = self._chord_edit_rows()
+                mods_c = pygame.key.get_mods()
+                if self.chord_edit_typing:
+                    if event.key == pygame.K_ESCAPE:
+                        self.chord_edit_typing = False
+                        self.chord_edit_buf    = ""
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        if rows:
+                            self._chord_edit_apply(
+                                rows[self.chord_edit_sel][1],
+                                self.chord_edit_buf)
+                        self.chord_edit_typing = False
+                        self.chord_edit_msg    = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        self.chord_edit_buf = self.chord_edit_buf[:-1]
+                    else:
+                        ch = event.unicode
+                        if ch and ch.isprintable() and len(self.chord_edit_buf) < 8:
+                            self.chord_edit_buf += ch
+                    return True
+                if event.key in (pygame.K_ESCAPE, pygame.K_y):
+                    self.chord_edit_open = False
+                elif event.key == pygame.K_UP:
+                    self.chord_edit_sel = max(0, self.chord_edit_sel - 1)
+                elif event.key == pygame.K_DOWN:
+                    self.chord_edit_sel = min(len(rows) - 1,
+                                              self.chord_edit_sel + 1)
+                elif event.key == pygame.K_PAGEUP:
+                    self.chord_edit_sel = max(0, self.chord_edit_sel - 10)
+                elif event.key == pygame.K_PAGEDOWN:
+                    self.chord_edit_sel = min(len(rows) - 1,
+                                              self.chord_edit_sel + 10)
+                elif event.key == pygame.K_HOME:
+                    self.chord_edit_sel = 0
+                elif event.key == pygame.K_END:
+                    self.chord_edit_sel = max(0, len(rows) - 1)
+                elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    d = -1 if event.key == pygame.K_LEFT else 1
+                    self.chord_edit_sel = max(0,
+                                              min(len(rows) - 1,
+                                                  self.chord_edit_sel + d))
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
+                                   pygame.K_t):
+                    if rows:
+                        self.chord_edit_typing = True
+                        self.chord_edit_buf = self._chord_edit_name_at(
+                            self._chord_edit_sec(rows[self.chord_edit_sel][1]))
+                        if self.chord_edit_buf == "—":
+                            self.chord_edit_buf = ""
+                elif event.key == pygame.K_DELETE:
+                    if rows:
+                        self._chord_edit_apply(rows[self.chord_edit_sel][1], "")
+                elif event.key == pygame.K_s and (mods_c & pygame.KMOD_CTRL):
+                    self._chord_edit_save()
+                return True
+
+            # ── Edición de acorde sobre la barra (texto) ───────────────
+            if self.chord_bar_typing:
+                if event.key == pygame.K_ESCAPE:
+                    self._chord_bar_cancel()
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    self._chord_bar_commit()
+                elif event.key == pygame.K_BACKSPACE:
+                    self.chord_bar_buf = self.chord_bar_buf[:-1]
+                else:
+                    ch = event.unicode
+                    if ch and ch.isprintable() and len(self.chord_bar_buf) < 8:
+                        self.chord_bar_buf += ch
+                return True
+
             # ── Menú funcionalidades opcionales ────────────────────────
             if self.feature_menu_open:
                 feats = features.FEATURES
@@ -2487,6 +3264,10 @@ class BassKaraoke:
                 self.ajustar_offset(-5.0 if ctrl else (-0.5 if shift else -0.05))
             elif event.key == pygame.K_PERIOD:
                 self.ajustar_offset(+5.0 if ctrl else (+0.5 if shift else +0.05))
+            elif event.key == pygame.K_LEFTBRACKET:
+                self.ajustar_inicio(-5.0 if ctrl else (-0.5 if shift else -0.05))
+            elif event.key == pygame.K_RIGHTBRACKET:
+                self.ajustar_inicio(+5.0 if ctrl else (+0.5 if shift else +0.05))
             elif event.key == pygame.K_LEFT:
                 self._snap_measure(-1)
             elif event.key == pygame.K_RIGHT:
@@ -2515,6 +3296,11 @@ class BassKaraoke:
                 self._training_open()
             elif event.key == pygame.K_g:
                 self._lab_open()
+            elif event.key == pygame.K_F7:
+                self._start_generation()
+            elif event.key == pygame.K_F8:
+                self.gen_barlen = 4 if self.gen_barlen == 3 else 3
+                print(f"[Gen] Compás para generar: {self.gen_barlen}/4")
             elif event.key == pygame.K_k:
                 self._cor_open()
             elif event.key == pygame.K_o:
@@ -2530,6 +3316,12 @@ class BassKaraoke:
                     self._close_align_editor(True)
                 else:
                     self._open_align_editor()
+            elif event.key == pygame.K_s and ctrl:
+                if self.chord_edit_dirty:
+                    ok, msg = self._save_chords()
+                    self.chord_bar_msg = ("" if ok else "Error: ") + msg
+                else:
+                    self._save_config()
             elif event.key == pygame.K_s:
                 self.cycle_score_renderer()
             elif event.key == pygame.K_c:
@@ -2540,23 +3332,51 @@ class BassKaraoke:
                 self.neck_map = not self.neck_map
             elif event.key == pygame.K_j:
                 self.chords_on = not self.chords_on
+            elif event.key == pygame.K_y:
+                self._toggle_chord_editor()
             elif event.key == pygame.K_F1:
                 self.help_open = not self.help_open
             elif event.key == pygame.K_F5:
                 self._save_config()
             elif event.key == pygame.K_F6:
                 self._load_config()
+            elif (self.chord_bar_sel_measure is not None and
+                  event.key in (pygame.K_RETURN, pygame.K_KP_ENTER)):
+                self._chord_bar_edit_selected()
+            elif (self.chord_bar_sel_measure is not None and
+                  event.key in (pygame.K_DELETE, pygame.K_BACKSPACE)):
+                self._chord_bar_delete()
+            elif (self.chord_bar_sel_measure is not None and
+                  event.key == pygame.K_ESCAPE):
+                self._chord_bar_clear()
+                self.chord_bar_msg = ""
             elif event.key == pygame.K_ESCAPE:
                 return False
 
         # ── Ratón: editor de alineación ────────────────────────────────
         elif event.type == pygame.MOUSEBUTTONDOWN:
+            if self.chord_edit_open:
+                return True
+            if self.chord_bar_typing:
+                return True
+            in_strip = KARAOKE_Y <= event.pos[1] <= KARAOKE_Y + KARAOKE_H
+            if in_strip and self.chords_on and (
+                    self.chord_events or self.lyric_events):
+                if event.button == 1:
+                    self._chord_bar_click(event.pos)
+                return True
+            if event.button == 1 and not in_strip:
+                self._chord_bar_clear()
+                self.chord_bar_msg = ""
             if self.align_editor_open:
                 if event.button == 1:
                     kind, id_ = self._align_pick_at_pos(event.pos)
                     if kind == "red":
                         self.align_dragging = True
                         self._align_set_offset_from_mouse(event.pos)
+                    elif kind == "start":
+                        self.align_dragging_start = True
+                        self._align_set_song_start_from_mouse(event.pos)
                     elif kind == "mark":
                         self.align_drag_marker = id_
                         self.align_cursor_sec  = id_
@@ -2576,12 +3396,34 @@ class BassKaraoke:
                     self._align_zoom(1 / 1.3, event.pos)
                 return True
             if event.button == 1:
+                _ov = (self.device_menu_open or self.pitch_menu_open
+                       or self.song_menu_open or self.feature_menu_open
+                       or self.tuner_open or self.help_open
+                       or self.training_open or self.lab_open
+                       or self.cor_open or self.ear_open)
+                # ── Franja de waveform: izq/der = navegar, central = mover audio ──
+                if (not _ov
+                        and WAVEFORM_Y <= event.pos[1] < WAVEFORM_Y + WAVEFORM_H
+                        and getattr(self, "song_wave", None) is not None):
+                    # Anclas: clic cerca de la línea verde/roja => arrastrarla.
+                    mx = event.pos[0]
+                    vx = self.viewport_x
+                    cx = W // 3
+                    s0 = self._bass_start16()
+                    xb = self.px_of(s0) - vx + cx
+                    xs = cx - vx
+                    db = abs(mx - xb) if -1 <= xb < W + 1 else 999
+                    ds = abs(mx - xs) if -1 <= xs < W + 1 else 999
+                    if min(db, ds) <= 9:
+                        self._anchor_drag = ("bass" if db <= ds else "start")
+                        self._anchor_drag_mx = mx
+                        return True
+                    self._drag_seeking    = True
+                    self._drag_start_beat = self.beat_time
+                    self._drag_start_mx   = mx
+                    return True
                 # ── Modo aprendizaje: pulsar mástil o piano ──────────
-                if not (self.device_menu_open or self.pitch_menu_open
-                        or self.song_menu_open or self.feature_menu_open
-                        or self.tuner_open or self.help_open
-                        or self.training_open or self.lab_open
-                        or self.cor_open or self.ear_open):
+                if not _ov:
                     _midi = self._piano_hit(event.pos)
                     if _midi is not None:
                         self._preview_from_piano(_midi)
@@ -2606,29 +3448,104 @@ class BassKaraoke:
                     self._drag_start_beat = self.beat_time
                     self._drag_start_mx   = mx
 
+            elif event.button in (2, 3):
+                _ov = (self.device_menu_open or self.pitch_menu_open
+                       or self.song_menu_open or self.feature_menu_open
+                       or self.tuner_open or self.help_open
+                       or self.training_open or self.lab_open
+                       or self.cor_open or self.ear_open)
+                if (not _ov
+                        and WAVEFORM_Y <= event.pos[1] < WAVEFORM_Y + WAVEFORM_H
+                        and getattr(self, "song_wave", None) is not None):
+                    if event.button == 3:      # derecha = navegar (como el tab)
+                        self._drag_seeking    = True
+                        self._drag_start_beat = self.beat_time
+                        self._drag_start_mx   = event.pos[0]
+                    else:                      # central = mover el audio (ambas anclas)
+                        self._wave_dragging   = True
+                        self._wave_drag_mx    = event.pos[0]
+                        self._wave_drag_off   = self.mp3_offset_sec
+                        self._wave_drag_start = self.song_start_sec
+                        self._wave_drag_acc   = 0.0
+                    return True
+
         elif event.type == pygame.MOUSEWHEEL:
+            if self.chord_edit_open:
+                rows = self._chord_edit_rows()
+                self.chord_edit_sel = max(
+                    0, min(len(rows) - 1,
+                           self.chord_edit_sel - int(event.y)))
+                return True
+            if self.chord_bar_typing:
+                return True
             if self.align_editor_open:
                 pos = getattr(event, "pos", None) or pygame.mouse.get_pos()
                 self._align_zoom(1.3 if event.y > 0 else 1 / 1.3, pos)
                 return True
 
         elif event.type == pygame.MOUSEBUTTONUP:
+            if self.chord_edit_open:
+                return True
             if self.align_editor_open:
                 self.align_dragging    = False
+                self.align_dragging_start = False
                 self.align_drag_marker = None
                 self.align_panning     = False
                 return True
-            if event.button == 1:
+            if event.button in (1, 3):
                 self._drag_seeking = False
+                if self._anchor_drag:
+                    self._anchor_drag = None
+                    self._remember_anchors()
+            if event.button == 2:
+                self._wave_dragging = False
+                self._remember_anchors()
 
         elif event.type == pygame.MOUSEMOTION:
+            if self.chord_edit_open:
+                return True
+            if self.chord_bar_typing:
+                return True
             if self.align_editor_open:
                 if self.align_drag_marker is not None:
                     self._align_drag_marker_to(event.pos)
                 elif self.align_dragging:
                     self._align_set_offset_from_mouse(event.pos)
+                elif self.align_dragging_start:
+                    self._align_set_song_start_from_mouse(event.pos)
                 elif self.align_panning:
                     self._align_pan_to(event.pos[0])
+                return True
+            if self._anchor_drag:
+                mx = event.pos[0]
+                dx = mx - self._anchor_drag_mx
+                if dx:
+                    ppt = self.px_per_16th or 1.0
+                    s0  = self._bass_start16()
+                    qpm = (self._tempo_at(s0) if self._anchor_drag == "bass"
+                           else self._lead_qpm())
+                    dsec = (dx / ppt) / 4.0 * 60.0 / max(1e-6, qpm)
+                    if self._anchor_drag == "bass":
+                        self.mp3_offset_sec += dsec
+                    else:
+                        self.song_start_sec += dsec
+                    self._clamp_anchors()
+                    self._anchor_drag_mx = mx
+                return True
+            if self._wave_dragging:
+                # "Agarrar" la onda: arrastrar a la derecha mueve el audio a la
+                # derecha (el ataque suena más tarde) => ambas anclas bajan.
+                mx = event.pos[0]
+                dx = mx - self._wave_drag_mx
+                if dx:
+                    ppt = self.px_per_16th or 1.0
+                    qpm = self._tempo_at(self._bass_start16())
+                    dsec = (dx / ppt) / 4.0 * 60.0 / max(1e-6, qpm)
+                    self._wave_drag_acc += dsec
+                    shift = min(self._wave_drag_acc, self._wave_drag_start)
+                    self.mp3_offset_sec = max(0.0, self._wave_drag_off - shift)
+                    self.song_start_sec = max(0.0, self._wave_drag_start - shift)
+                    self._wave_drag_mx  = mx
                 return True
             if self._drag_seeking:
                 mx, _ = event.pos

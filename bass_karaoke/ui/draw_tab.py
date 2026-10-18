@@ -101,19 +101,23 @@ def draw_tab(app) -> None:
         app.screen.blit(mt, (W // 2 - mt.get_width() // 2,
                              TAB_Y + TAB_H // 2 - mt.get_height() // 2))
 
-    prev_meas = -1
-    for note in app.notes:
-        nx = app.px_of(note["start16"]) - vx + CURSOR_X
-        if 30 < nx < W and note["measure_num"] != prev_meas:
-            prev_meas = note["measure_num"]
-            m = app.font_tiny.render(str(note["measure_num"]), True, C_GRAY)
-            app.screen.blit(m, (nx - m.get_width() // 2, TAB_Y + 2))
-
-    for b in range(0, total16 + 16, 16):
-        bx = app.px_of(b) - vx + CURSOR_X
-        if 30 < bx < W:
-            pygame.draw.line(app.screen, (55, 55, 80),
-                             (bx, TAB_Y + 6), (bx, TAB_Y + TAB_H - 6), 1)
+    # Rejilla de compás (según la métrica real: 3/4 → cada 12 dieciseisavos)
+    phase = app.grid_phase16()
+    bar_s16 = [(n, int(s)) for n, s in (getattr(app, "measure_starts", None) or [])]
+    if bar_s16:
+        for num, s16 in bar_s16:
+            bx = app.px_of(s16 + phase if s16 > 0 else s16) - vx + CURSOR_X
+            if 30 < bx < W:
+                pygame.draw.line(app.screen, (55, 55, 80),
+                                 (bx, TAB_Y + 6), (bx, TAB_Y + TAB_H - 6), 1)
+                m = app.font_tiny.render(str(num), True, C_GRAY)
+                app.screen.blit(m, (bx + 2, TAB_Y + 2))
+    else:
+        for b in app.bar_starts16():
+            bx = app.px_of(b + phase if b > 0 else b) - vx + CURSOR_X
+            if 30 < bx < W:
+                pygame.draw.line(app.screen, (55, 55, 80),
+                                 (bx, TAB_Y + 6), (bx, TAB_Y + TAB_H - 6), 1)
 
     for label, b16 in app.sections:
         sx = app.px_of(b16) - vx + CURSOR_X

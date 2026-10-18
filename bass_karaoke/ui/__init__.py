@@ -18,6 +18,7 @@ from .draw_ear import draw_ear
 from .draw_seq import draw_tech, draw_arp, draw_scale
 from .draw_corrido import draw_corrido_panel
 from .draw_karaoke import draw_karaoke_strip
+from .draw_waveform import draw_waveform_strip
 
 __all__ = [
     "build_piano_keys",
@@ -28,5 +29,5 @@ __all__ = [
     "draw_song_menu", "draw_feature_menu", "draw_help",
     "draw_training", "draw_lab_panel", "draw_ear",
     "draw_tech", "draw_arp", "draw_scale",
-    "draw_corrido_panel", "draw_karaoke_strip",
+    "draw_corrido_panel", "draw_karaoke_strip", "draw_waveform_strip",
 ]

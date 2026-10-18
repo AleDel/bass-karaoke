@@ -27,6 +27,9 @@ def draw_score(app) -> None:
                 margin = app._score_surf.get_width() * 0.04
                 return margin + max(0, b16) / total * (app._score_surf.get_width() - margin)
             if b16 <= xs[0][0]:
+                if len(xs) > 1 and xs[1][0] > xs[0][0]:
+                    slope = (xs[1][1] - xs[0][1]) / (xs[1][0] - xs[0][0])
+                    return xs[0][1] - (xs[0][0] - b16) * slope
                 return xs[0][1]
             if b16 >= xs[-1][0]:
                 return xs[-1][1]

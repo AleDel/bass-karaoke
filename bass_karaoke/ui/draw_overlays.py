@@ -323,7 +323,7 @@ def draw_song_menu(app) -> None:
     if not app.songs:
         app.screen.blit(
             app.font_med.render(
-                "No se encontraron canciones en songs/ (se necesita un .musicxml)",
+                "No se encontraron canciones en songs/ (se necesita .musicxml o audio)",
                 True, C_RED),
             (mx + 20, my + 80))
     else:
@@ -341,10 +341,12 @@ def draw_song_menu(app) -> None:
                                  (mx + 6, ry - 2, mw - 12, row_h - 2),
                                  border_radius=4)
             col  = C_GREEN if is_cur else C_WHITE if is_sel else C_GRAY
-            has  = "●" if s["mp3"] else "○"
+            has  = "●" if s.get("audio") else "○"
             txt  = f"{has} {s['name']}"
-            if not s["mp3"]:
-                txt += "   (sin mp3)"
+            if s.get("audio_only"):
+                txt += "   (sin partitura · F7)"
+            elif not s.get("audio"):
+                txt += "   (sin audio)"
             lbl = app.font_small.render(txt, True, col)
             app.screen.blit(lbl, (mx + 12, ry + 4))
 
@@ -366,8 +368,9 @@ def draw_help(app) -> None:
         ("Tempo y offset", [
             ("↑ / ↓", "Tempo ±5 BPM (estira el MP3 con varispeed)"),
             ("  , / .", "Offset MP3 ±0.05 s  (Shift ±0.5 s, Ctrl ±5 s)"),
+            ("  [ / ]", "Inicio de canción ±0.05 s (compás 1)"),
             ("W", "Editor de alineación (waveform)"),
-            ("F5 / F6", "Guardar / cargar configuración"),
+            ("F5 / F6", "Guardar / cargar config  (Ctrl+S = acordes u offset)"),
         ]),
         ("Sonido", [
             ("M", "Silenciar MP3"),
@@ -378,11 +381,15 @@ def draw_help(app) -> None:
         ]),
         ("Vista", [
             ("L", "Selector de canciones"),
+            ("F7", "Generar partitura desde el audio (si falta)"),
             ("S", "Partitura Verovio ↔ Music21"),
             ("B", "Tempo en BPM ↔ figura"),
             ("H", "Mapa del mástil"),
             ("C", "Countdown on/off"),
             ("J", "Acordes + letra (karaoke)"),
+            ("Y", "Editor de acordes (por compás)"),
+            ("Clic barra", "Seleccionar compás (tira J)"),
+            ("Enter / Supr", "Editar / quitar el acorde del compás"),
             ("Clic mástil/piano", "Oír y ver la nota (aprender notas)"),
         ]),
         ("Entrenamiento", [
@@ -404,9 +411,20 @@ def draw_help(app) -> None:
     ov.fill(C_OVERLAY)
     app.screen.blit(ov, (0, 0))
 
+    max_kw = 0
+    max_dw = 0
+    for _t, items in groups:
+        for k, d in items:
+            max_kw = max(max_kw, app.font_small.size(k)[0])
+            max_dw = max(max_dw, app.font_small.size(d)[0])
+
     row_h   = 22
     n_rows  = sum(1 + len(g[1]) for g in groups)
-    mw, mh  = 620, 90 + n_rows * row_h
+    max_h   = H - 20
+    if 90 + n_rows * row_h > max_h:
+        row_h = max(14, (max_h - 90) // max(1, n_rows))
+    mw      = max(620, 36 + max_kw + 14 + max_dw + 16)
+    mh      = 90 + n_rows * row_h
     mx, my  = W // 2 - mw // 2, H // 2 - mh // 2
 
     pygame.draw.rect(app.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
@@ -418,6 +436,11 @@ def draw_help(app) -> None:
                      (mx + 10, my + 44), (mx + mw - 10, my + 44), 1)
 
     y = my + 54
+    max_kw = 0
+    for _t, items in groups:
+        for k, _d in items:
+            max_kw = max(max_kw, app.font_small.size(k)[0])
+    desc_x = mx + 36 + max_kw + 14
     for title, items in groups:
         app.screen.blit(app.font_small.render(title, True, C_BLUE),
                         (mx + 16, y))
@@ -426,5 +449,5 @@ def draw_help(app) -> None:
             app.screen.blit(app.font_small.render(key, True, C_ACCENT),
                             (mx + 36, y))
             app.screen.blit(app.font_small.render(desc, True, C_WHITE),
-                            (mx + 150, y))
+                            (desc_x, y))
             y += row_h
