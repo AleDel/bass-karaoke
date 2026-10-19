@@ -164,12 +164,27 @@ def draw_device_menu(app) -> None:
             tag    = (app.font_tiny.render("¿salida?", True, C_WAIT)
                       if device_name_warning(name) else None)
             tag_w  = tag.get_width() + 10 if tag else 0
-            name_w = mw - 24 - tag_w - app.font_small.size(prefix)[0]
+            name_w = mw - 36 - tag_w - app.font_small.size(prefix)[0]
             lbl = app.font_small.render(
                 prefix + _fit_text(app.font_small, name, name_w), True, col)
             app.screen.blit(lbl, (mx + 12, ry))
             if tag:
-                app.screen.blit(tag, (mx + mw - 16 - tag.get_width(), ry + 4))
+                app.screen.blit(tag, (mx + mw - 24 - tag.get_width(), ry + 4))
+
+        total = len(app.audio_devices)
+        if total > max_rows:
+            bar_x   = mx + mw - 10
+            bar_y   = my + 48
+            bar_h   = (mh - 78) - 6
+            pygame.draw.rect(app.screen, C_DGRAY, (bar_x, bar_y, 4, bar_h),
+                             border_radius=2)
+            thumb_h = max(18, int(bar_h * max_rows / total))
+            offset  = int((bar_h - thumb_h) * start / max(1, total - max_rows))
+            pygame.draw.rect(app.screen, C_ACCENT,
+                             (bar_x, bar_y + offset, 4, thumb_h), border_radius=2)
+            cnt = app.font_tiny.render(
+                f"{app.view.device_menu_sel + 1}/{total}", True, C_GRAY)
+            app.screen.blit(cnt, (mx + mw - 16 - cnt.get_width(), my + 18))
 
     hint = app.font_tiny.render(
         "Up/Dn navegar    ENTER confirmar    ESC / D  cerrar",

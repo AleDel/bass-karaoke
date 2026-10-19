@@ -114,17 +114,23 @@ def draw_pitch_panel(app) -> None:
 
     if INPUT_AVAILABLE and app.audio_devices:
         from ..audio import device_name_warning
+        from .draw_overlays import _fit_text
         devs = app.audio_devices
         dev = devs[app.device_idx] if 0 <= app.device_idx < len(devs) else devs[0]
-        dev_name = dev[1][:44]
+        warn    = device_name_warning(dev[1])
+        tail    = "  |  D=cambiar"
+        fixed_w = app.font_tiny.size(f"ENTRADA [{app.device_idx}]: " + tail)[0]
+        warn_w  = (app.font_tiny.size(f"({warn} ¿es la entrada del bajo?)")[0] + 12
+                   if warn else 0)
+        name_max = max(80, pw - 20 - fixed_w - warn_w)
         t = app.font_tiny.render(
-            f"ENTRADA [{app.device_idx}]: {dev_name}  |  D=cambiar",
+            f"ENTRADA [{app.device_idx}]: "
+            f"{_fit_text(app.font_tiny, dev[1], name_max)}{tail}",
             True, C_GRAY)
         app.screen.blit(t, (px + 10, py + 6))
-        warn = device_name_warning(dev[1])
         if warn:
             wt = app.font_tiny.render(f"({warn} ¿es la entrada del bajo?)", True, C_WAIT)
-            app.screen.blit(wt, (px + 12 + t.get_width(), py + 6))
+            app.screen.blit(wt, (px + pw - 10 - wt.get_width(), py + 6))
     else:
         t = app.font_tiny.render("pyaudio no disponible (entrada de audio)", True, C_RED)
         app.screen.blit(t, (px + 10, py + 6))
