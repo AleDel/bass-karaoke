@@ -34,7 +34,7 @@ def draw_corrido_panel(app) -> None:
     pygame.draw.line(app.screen, C_ACCENT, (0, y0), (W, y0), 2)
     pygame.draw.line(app.screen, C_DGRAY, (0, y0 + h - 1), (W, y0 + h - 1), 1)
 
-    state = "▶ BAJEO" if app.cor_running else "❚❚ PARADO (SPACE para andar)"
+    state = ">> BAJEO" if app.cor_running else "|| PARADO (SPACE para andar)"
     scol = C_GREEN if app.cor_running else C_GRAY
     title = app.font_med.render(
         f"CORRIDO · {app.cor_title} · {app.cor_bpm:.0f} BPM · 3/4",
@@ -102,7 +102,7 @@ def draw_corrido_panel(app) -> None:
                 True, C_WHITE)
         app.screen.blit(exp, (12, y0 + 104))
         if app.cor_last_msg:
-            mcol = C_OK if "✓" in app.cor_last_msg else C_RED
+            mcol = C_OK if "[OK]" in app.cor_last_msg else C_RED
             msg = app.font_small.render(app.cor_last_msg[:70], True, mcol)
             app.screen.blit(msg, (12, y0 + 144))
 

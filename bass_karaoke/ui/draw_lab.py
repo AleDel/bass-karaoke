@@ -34,7 +34,7 @@ def draw_lab_panel(app) -> None:
     pygame.draw.line(app.screen, C_ACCENT, (0, y0), (W, y0), 2)
     pygame.draw.line(app.screen, C_DGRAY, (0, y0 + h - 1), (W, y0 + h - 1), 1)
 
-    state = "▶ ANDANDO" if app.lab_running else "❚❚ PARADO (SPACE para andar)"
+    state = ">> ANDANDO" if app.lab_running else "|| PARADO (SPACE para andar)"
     scol = C_GREEN if app.lab_running else C_GRAY
     title = app.font_med.render(
         f"WALKING LAB · {app.lab_title} · {app.lab_bpm:.0f} BPM", True, C_ACCENT)
@@ -90,7 +90,7 @@ def draw_lab_panel(app) -> None:
             True, C_WHITE)
         app.screen.blit(exp, (12, y0 + 92))
         if app.lab_last_msg:
-            mcol = C_OK if "✓" in app.lab_last_msg else C_RED
+            mcol = C_OK if "[OK]" in app.lab_last_msg else C_RED
             msg = app.font_small.render(app.lab_last_msg[:70], True, mcol)
             app.screen.blit(msg, (12, y0 + 132))
 

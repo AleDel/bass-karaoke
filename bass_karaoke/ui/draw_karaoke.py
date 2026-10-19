@@ -232,7 +232,7 @@ def draw_karaoke_strip(app) -> None:
                 font = app.font_med
                 col = C_ACCENT
             else:
-                label = "𝄽" if rest else (name or "—")
+                label = "—" if rest else (name or "—")
                 font = app.font_med if (is_cur and not rest) else app.font_small
                 col = (C_GRAY if rest else
                        C_ACCENT if is_change or is_cur else

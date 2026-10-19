@@ -47,8 +47,8 @@ def draw_guitartab(app) -> None:
     for s, y in STR_Y.items():
         iy = int(y)
         sl = app.font_tiny.render(STRING_NAMES[s], True, STRING_COLORS[s])
-        app.screen.blit(sl, (22, iy - sl.get_height() // 2))
-        pygame.draw.line(app.screen, _LINE_COL, (42, iy), (W - 2, iy), 1)
+        app.screen.blit(sl, (40, iy - sl.get_height() // 2))
+        pygame.draw.line(app.screen, _LINE_COL, (60, iy), (W - 2, iy), 1)
 
     # ── Línea de cursor ───────────────────────────────────────────────────────
     pygame.draw.line(app.screen, C_ACCENT,

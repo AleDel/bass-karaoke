@@ -94,8 +94,8 @@ class CorridosModeMixin:
             self.cor_role_ok[beat] += 1
         if beat < len(self.cor_beat_res):
             self.cor_beat_res[beat] = ok
-        self.cor_last_msg = (f"T{beat + 1} {st['role']} {st['name']} ✓" if ok
-                             else f"T{beat + 1} ✗ (toca {st['name']})")
+        self.cor_last_msg = (f"T{beat + 1} {st['role']} {st['name']}  [OK]" if ok
+                             else f"T{beat + 1} {st['role']}  [X] (toca {st['name']})")
 
     def _key_cor(self, event) -> bool:
         """Teclado de corridos (modal)."""

@@ -30,6 +30,15 @@ from ..config import (
 )
 
 
+def _fit_text(font, text, max_w):
+    """Recorta un texto a max_w px añadiendo elipsis."""
+    if font.size(text)[0] <= max_w:
+        return text
+    while text and font.size(text + "…")[0] > max_w:
+        text = text[:-1]
+    return text + "…"
+
+
 def draw_tuner(app) -> None:
     ov = pygame.Surface((W, H), pygame.SRCALPHA)
     ov.fill((5, 5, 18, 235))
@@ -174,7 +183,8 @@ def draw_pitch_menu(app) -> None:
         "pesto-onnx":   "PESTO ONNX     (CPU, sin PyTorch)",
         "basic-pitch":  "Basic Pitch    (Spotify, ONNX en Windows)",
     }
-    mw, mh = 540, 260
+    mw = 540
+    mh = 50 + len(PITCH_METHODS) * 32 + 34
     mx, my = W // 2 - mw // 2, H // 2 - mh // 2
 
     ov = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -211,7 +221,7 @@ def draw_pitch_menu(app) -> None:
 def draw_feature_menu(app) -> None:
     from .. import features
 
-    mw, mh = 900, 560
+    mw, mh = 1040, 560
     mx, my = W // 2 - mw // 2, H // 2 - mh // 2
 
     ov = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -257,14 +267,17 @@ def draw_feature_menu(app) -> None:
             badge, bcol = ("no instalado", C_GRAY)
 
         name_col = C_WHITE if is_sel else C_GRAY
-        lbl = app.font_small.render(f["name"][:48], True, name_col)
+        lbl = app.font_small.render(
+            _fit_text(app.font_small, f["name"], 400), True, name_col)
         app.screen.blit(lbl, (mx + 12, ry + 4))
 
-        size = app.font_tiny.render(f["size"], True, C_GRAY)
-        app.screen.blit(size, (mx + 470, ry + 5))
+        size = app.font_tiny.render(
+            _fit_text(app.font_tiny, f["size"], 188), True, C_GRAY)
+        app.screen.blit(size, (mx + 420, ry + 5))
 
-        needs = app.font_tiny.render(f["needs"][:26], True, C_GRAY)
-        app.screen.blit(needs, (mx + 585, ry + 5))
+        needs = app.font_tiny.render(
+            _fit_text(app.font_tiny, f["needs"], 230), True, C_GRAY)
+        app.screen.blit(needs, (mx + 614, ry + 5))
 
         b = app.font_small.render(badge, True, bcol)
         app.screen.blit(b, (mx + mw - b.get_width() - 12, ry + 4))
@@ -272,7 +285,7 @@ def draw_feature_menu(app) -> None:
     # ── Detalle de la funcionalidad seleccionada ─────────────────────
     sel    = feats[app.view.feature_menu_sel]
     dy     = top_y + max_rows * row_h + 12
-    title  = app.font_small.render(f"▶ {sel['name']}", True, C_ACCENT)
+    title  = app.font_small.render(f"> {sel['name']}", True, C_ACCENT)
     app.screen.blit(title, (mx + 12, dy))
     dy += 20
 

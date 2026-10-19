@@ -83,8 +83,8 @@ class WalkingLabMixin:
         if beat < len(self.lab_beat_res):
             self.lab_beat_res[beat] = ok
         st = self.lab_steps[bar][beat]
-        self.lab_last_msg = (f"T{beat + 1} {st['role']} {st['name']} ✓" if ok
-                             else f"T{beat + 1} ✗ (toca {st['name']})")
+        self.lab_last_msg = (f"T{beat + 1} {st['role']} {st['name']}  [OK]" if ok
+                             else f"T{beat + 1} {st['role']}  [X] (toca {st['name']})")
 
     def _key_lab(self, event) -> bool:
         """Teclado del Walking Lab (modal)."""

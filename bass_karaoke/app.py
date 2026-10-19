@@ -165,6 +165,21 @@ def _create_window():
         return pygame.display.set_mode((W, H))
 
 
+def _wrap_lines(text, font, max_w):
+    """Divide texto por palabras para que cada línea quepa en max_w."""
+    lines, cur = [], ""
+    for word in text.split():
+        probe = f"{cur} {word}".strip()
+        if cur and font.size(probe)[0] > max_w:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = probe
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def _fmt_tempo(tmap, scaled_by=1.0, mode="bpm"):
     """Cadena compacta de un mapa de tempo, en BPM o en figuras.
     scaled_by>1 aplica el estirado global (rate = bpm/bpm_original)."""
@@ -2136,23 +2151,30 @@ class BassKaraoke(
 
         title = self.font_big.render("Editor de alineación (MP3)", True, C_ACCENT)
         self.screen.blit(title, (x0, 30))
-        help_t = self.font_small.render(
+        help_txt = (
             "SPACE=play/pausa   F=analizar tempo (librosa)   "
             "rueda=zoom   botón central=pan   "
             "clic=mueve cursor   arrastra roja=inicio bajo   "
             "arrastra verde gruesa=compás 1   verde fina=tempo   "
             "click der=añade marca   ↑/↓=BPM tramo   "
-            "←/→=cursor ±1s   Supr=quitar   R=reset a la partitura   W/ESC=guardar",
-            True, C_GRAY)
-        self.screen.blit(help_t, (x0, 70))
-        legend_t = self.font_small.render(
+            "←/→=cursor ±1s   Supr=quitar   R=reset a la partitura   W/ESC=guardar")
+        legend_txt = (
             "Leyenda:  banda verde = zona de transcripción   "
             "verde gruesa = inicio de canción (compás 1)   "
             "roja = primera nota del bajo (independiente)   "
             "verde fina = marcas de tempo (arrástralas a donde suenan)   "
-            "cian Σ = donde indica la partitura (aparece al mover una marca)",
-            True, (120, 170, 140))
-        self.screen.blit(legend_t, (x0, 90))
+            "cian Σ = donde indica la partitura (aparece al mover una marca)")
+        lh = self.font_small.get_linesize()
+        y = 70
+        for line in _wrap_lines(help_txt, self.font_small, w):
+            self.screen.blit(
+                self.font_small.render(line, True, C_GRAY), (x0, y))
+            y += lh
+        y += 4
+        for line in _wrap_lines(legend_txt, self.font_small, w):
+            self.screen.blit(
+                self.font_small.render(line, True, (120, 170, 140)), (x0, y))
+            y += lh
 
         if self.align_wave is None:
             msg = self.font_med.render("Sin MP3 o waveform no disponible", True, C_ERR)
@@ -2377,6 +2399,10 @@ class BassKaraoke(
         return False
 
     def _header_chip_action(self, action):
+        if action != "help" and (self.training_open or self.lab_open
+                                 or self.cor_open or self.ear_open
+                                 or self.tx_open or self.ar_open or self.sc_open):
+            self._close_modes()
         if action == "help":
             self.view.help_open = not self.view.help_open
         elif action == "songs":
