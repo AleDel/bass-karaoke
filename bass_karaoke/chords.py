@@ -171,6 +171,76 @@ def lyric_at(events, sec: float, default: str = ""):
     return txt
 
 
+# ── Edición de acordes: vocabulario, sugerencias y alineación ───────────
+# Sufijos del cifrado español que usa la app (m = menor, 7 = séptima…).
+CHORD_QUALITIES = ("", "m", "7", "m7", "maj7", "6", "m6", "dim", "aug",
+                   "sus2", "sus4", "add9", "9", "m9", "5", "m7b5")
+
+
+def chord_vocabulary():
+    """Acordes del cifrado usado aquí (Do, Dom, Do7, Rebm…)."""
+    return [f"{r}{q}" for r in NAMES_ES for q in CHORD_QUALITIES]
+
+
+def suggest_chords(text: str, used=(), limit: int = 8):
+    """Sugerencias para el texto tecleado; primero los de la propia canción.
+
+    Coincide por prefijo ("fa" → Fa, Fam, Fa7…) y, con dos o más letras,
+    también en cualquier posición ("m7" → Fam7, Dom7…).
+    """
+    used_l = []
+    for u in used or ():
+        u = str(u).strip()
+        if u and u not in used_l:
+            used_l.append(u)
+    vocab = chord_vocabulary()
+    query = (text or "").strip().lower()
+    if not query:
+        out = used_l + [n for n in vocab if n not in used_l]
+        return out[:limit]
+
+    def _hit(n):
+        low = n.lower()
+        return low.startswith(query) or (len(query) > 1 and query in low)
+
+    out = [n for n in used_l if _hit(n)]
+    out += [n for n in vocab if _hit(n) and n not in out]
+    return out[:limit]
+
+
+def snap_events_to_grid(events, grid_secs, tol_ratio: float = 0.2,
+                        tol_max: float = 0.30):
+    """Alinea eventos a la rejilla cuando caen cerca de un inicio de compás.
+
+    Corrige desfases pequeños (p. ej. un acorde guardado con el offset del
+    MP3 en vez de con la rejilla de la partitura) sin tocar los cambios
+    intencionados a mitad de compás: la tolerancia es una fracción del
+    compás, con tope en segundos. Si dos eventos caen en el mismo inicio
+    gana el más cercano.
+    """
+    grid = sorted({float(g) for g in (grid_secs or ())})
+    evs  = [(float(s), str(n)) for s, n in (events or ())]
+    if not grid:
+        return [list(e) for e in evs]
+    spans = [b - a for a, b in zip(grid, grid[1:], strict=False) if b > a]
+    span  = min(spans) if spans else 1.0
+    tol   = max(0.05, min(tol_max, span * tol_ratio))
+    snapped = {}
+    out     = []
+    for sec, name in evs:
+        near = min(grid, key=lambda g: abs(g - sec))
+        dist = abs(near - sec)
+        if dist <= tol:
+            prev = snapped.get(near)
+            if prev is None or dist < prev[0]:
+                snapped[near] = (dist, name)
+        else:
+            out.append([sec, name])
+    out += [[near, name] for near, (_d, name) in snapped.items()]
+    out.sort(key=lambda e: e[0])
+    return out
+
+
 def save_song_map(path: str, chords, lyrics, barlen: int = 4):
     """Guarda el mapa de la canción. `barlen` = tiempos por compás
     (3 en 3/4 como los corridos tumbados, 4 en 4/4) para agrupar las

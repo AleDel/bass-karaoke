@@ -60,6 +60,47 @@ def test_load_song_map_missing_or_corrupt_returns_empty(tmp_path):
     assert chords.load_song_map(str(bad)) == ([], [])
 
 
+def test_suggest_chords_filters_by_prefix_and_prioritises_song_chords():
+    out = chords.suggest_chords("Fam", used=["Fam", "Dom"])
+    assert out[0] == "Fam"
+    assert all(n.startswith("Fam") for n in out[1:])
+    assert len(out) <= 8
+
+
+def test_suggest_chords_empty_query_lists_song_chords_first():
+    out = chords.suggest_chords("", used=["Dom", "Sibm"])
+    assert out[:2] == ["Dom", "Sibm"]
+    assert out[2] == chords.chord_vocabulary()[0]
+
+
+def test_suggest_chords_matches_anywhere_with_two_letters():
+    assert "Fam7" in chords.suggest_chords("am7")
+    assert chords.suggest_chords("zz") == []
+
+
+def test_snap_events_to_grid_realigns_small_offsets():
+    # Compases de 1.94 s; el acorde se guardó con el offset del MP3 (2.1).
+    grid = [0.0, 1.935, 3.871, 5.806]
+    assert chords.snap_events_to_grid([(2.1, "Fam")], grid) == [[1.935, "Fam"]]
+
+
+def test_snap_events_to_grid_keeps_mid_measure_changes():
+    grid = [0.0, 1.935, 3.871, 5.806]
+    # Medio compás exacto (≈0.97 s) queda donde está.
+    assert chords.snap_events_to_grid([(2.9, "Dom")], grid) == [[2.9, "Dom"]]
+
+
+def test_snap_events_to_grid_without_grid_returns_original():
+    evs = [(1.0, "Do"), (2.0, "Re")]
+    assert chords.snap_events_to_grid(evs, []) == [[1.0, "Do"], [2.0, "Re"]]
+
+
+def test_snap_events_to_grid_keeps_closest_when_two_collide():
+    # Ambos caen cerca del compás 2: gana el más próximo (Sol).
+    out = chords.snap_events_to_grid([(1.9, "Do"), (1.98, "Sol")], [0.0, 2.0])
+    assert out == [[2.0, "Sol"]]
+
+
 def test_load_song_barlen_accepts_valid_and_falls_back(tmp_path):
     path = tmp_path / "bar.json"
 

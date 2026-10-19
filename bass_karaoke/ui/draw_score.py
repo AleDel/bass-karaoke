@@ -23,35 +23,46 @@ from ..config import (
 SY = TAB_Y + TAB_H + 8
 
 
+def score_img_x(app, b16):
+    """Posición x (en píxeles de la imagen de Verovio) de un start16.
+
+    Usa las posiciones reales de las notas (_score_note_xs) e interpola
+    entre ellas; si no hay datos, cae a un reparto lineal de la imagen.
+    Es la única base válida para el scroll: mover la partitura en unidades
+    lineales (px_of) la deja descolocada respecto a la música.
+    """
+    surf = app.view._score_surf
+    xs   = app.view._score_note_xs
+    if surf is None:
+        return float(b16)
+    if not xs:
+        total  = getattr(app.view, "_score_total16", None) or 1
+        margin = surf.get_width() * 0.04
+        return margin + max(0, b16) / total * (surf.get_width() - margin)
+    if b16 <= xs[0][0]:
+        if len(xs) > 1 and xs[1][0] > xs[0][0]:
+            slope = (xs[1][1] - xs[0][1]) / (xs[1][0] - xs[0][0])
+            return xs[0][1] - (xs[0][0] - b16) * slope
+        return xs[0][1]
+    if b16 >= xs[-1][0]:
+        return xs[-1][1]
+    for i in range(len(xs) - 1):
+        b0, x0 = xs[i]
+        b1, x1 = xs[i + 1]
+        if b0 <= b16 <= b1:
+            t = (b16 - b0) / (b1 - b0) if b1 > b0 else 0.0
+            return x0 + t * (x1 - x0)
+    return xs[-1][1]
+
+
 def draw_score(app) -> None:
     CURSOR_X = W // 3
     pygame.draw.rect(app.screen, (13, 13, 22), (0, SY, W, SCORE_H))
 
     if app.view._score_surf is not None:
-        xs = app.view._score_note_xs
-
-        def beat_to_img_x(b16):
-            if not xs:
-                total  = getattr(app.view, '_score_total16', None) or 1
-                margin = app.view._score_surf.get_width() * 0.04
-                return margin + max(0, b16) / total * (app.view._score_surf.get_width() - margin)
-            if b16 <= xs[0][0]:
-                if len(xs) > 1 and xs[1][0] > xs[0][0]:
-                    slope = (xs[1][1] - xs[0][1]) / (xs[1][0] - xs[0][0])
-                    return xs[0][1] - (xs[0][0] - b16) * slope
-                return xs[0][1]
-            if b16 >= xs[-1][0]:
-                return xs[-1][1]
-            for i in range(len(xs) - 1):
-                b0, x0 = xs[i]
-                b1, x1 = xs[i + 1]
-                if b0 <= b16 <= b1:
-                    t = (b16 - b0) / (b1 - b0) if b1 > b0 else 0.0
-                    return x0 + t * (x1 - x0)
-            return xs[-1][1]
-
-        target_x = beat_to_img_x(app.beat_time)
-        app.view._score_scroll_x += (target_x - app.view._score_scroll_x) * 0.15
+        # Scroll EXACTO: la partitura va pegada a la música (sin lerp, que
+        # dejaba el pentagrama ~0.3 s por detrás del waveform y del mástil).
+        app.view._score_scroll_x = score_img_x(app, app.beat_time)
         blit_x = CURSOR_X - int(app.view._score_scroll_x)
 
         NAME_H = 14   # altura de la tira de nombres de nota
@@ -66,7 +77,7 @@ def draw_score(app) -> None:
         MIN_GAP   = 26          # px mínimos entre etiquetas
         LABEL_X0  = 90          # dejar espacio para la etiqueta "PARTITURA"
         for note in app.notes:
-            img_x  = beat_to_img_x(note["start16"])
+            img_x  = score_img_x(app, note["start16"])
             nx     = blit_x + int(img_x)
             if nx < LABEL_X0 or nx > W:
                 continue

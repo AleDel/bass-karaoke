@@ -1,7 +1,7 @@
 from .draw_corrido import draw_corrido_panel
 from .draw_ear import draw_ear
 from .draw_guitartab import draw_guitartab
-from .draw_karaoke import draw_karaoke_strip
+from .draw_karaoke import draw_chord_editor_popup, draw_karaoke_strip
 from .draw_lab import draw_lab_panel
 from .draw_neck import draw_neck
 from .draw_overlays import (
@@ -37,5 +37,6 @@ __all__ = [
     "draw_song_menu", "draw_feature_menu", "draw_help",
     "draw_training", "draw_lab_panel", "draw_ear",
     "draw_tech", "draw_arp", "draw_scale",
-    "draw_corrido_panel", "draw_karaoke_strip", "draw_waveform_strip",
+    "draw_corrido_panel", "draw_karaoke_strip", "draw_chord_editor_popup",
+    "draw_waveform_strip",
 ]

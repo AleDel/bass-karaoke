@@ -19,7 +19,7 @@ import math
 
 import pygame
 
-from ..chords import lyric_at
+from ..chords import lyric_at, snap_events_to_grid
 from ..config import (
     C_ACCENT,
     C_BG2,
@@ -58,7 +58,26 @@ def _vis16(app, raw16: float) -> float:
     return raw16 + (float(app.grid_phase16()) if raw16 > 1e-9 else 0.0)
 
 
-def chord_measure_cells(app):
+def snapped_chord_events(app):
+    """Eventos de acorde alineados a la rejilla de compases (base partitura).
+
+    El .chords.json puede traer tiempos desfasados unas décimas (p. ej.
+    guardados con el offset del MP3); alinearlos evita que un cambio de
+    acorde se quede "invisible" en el compás donde suena.
+    """
+    evs = [(float(s), str(n)) for s, n in
+           (getattr(app, "chord_events", []) or [])]
+    ms = list(getattr(app, "measure_starts", []) or [])
+    if not evs or not ms:
+        return [list(e) for e in evs]
+    try:
+        grid = [float(app._song_seconds(float(s16))) for _num, s16 in ms]
+    except Exception:
+        return evs
+    return snap_events_to_grid(evs, grid)
+
+
+def chord_measure_cells(app, evs=None):
     """Celdas por compás.
 
     Devuelve [(i, num, raw0, v0, v1, sec0, sec1, name, is_change)] donde
@@ -73,7 +92,7 @@ def chord_measure_cells(app):
             return []
         n = int(math.ceil(total / bar16))
         ms = [[i + 1, i * bar16] for i in range(n)]
-    evs = list(getattr(app, "chord_events", []) or [])
+    evs = list(evs) if evs is not None else snapped_chord_events(app)
 
     def eff(sec):
         name = ""
@@ -132,6 +151,30 @@ def chord_measure_hit_test(app, pos):
     return None
 
 
+def draw_chord_editor_popup(app) -> None:
+    """Desplegable de acordes mientras se teclea uno en la barra.
+
+    Se dibuja aparte (después de las tiras) porque abre justo debajo de la
+    barra, encima del waveform; los rects vienen de la app para poder
+    clicar en ellos.
+    """
+    if not bool(getattr(app, "chord_bar_typing", False)):
+        return
+    layout = app.chord_bar_sugg_layout()
+    if not layout:
+        return
+    sel = int(getattr(app, "chord_bar_sugg_idx", -1))
+    for i, (name, rect) in enumerate(layout):
+        is_sel = (i == sel)
+        pygame.draw.rect(app.screen, (26, 26, 44) if is_sel else (14, 14, 26),
+                         rect, border_radius=4)
+        pygame.draw.rect(app.screen, C_ACCENT if is_sel else C_DGRAY,
+                         rect, 1, border_radius=4)
+        txt = app.font_small.render(name, True, C_ACCENT if is_sel else C_GRAY)
+        app.screen.blit(txt, (rect.x + 8,
+                              rect.y + rect.h // 2 - txt.get_height() // 2))
+
+
 def draw_karaoke_strip(app) -> None:
     y0, h = KARAOKE_Y, KARAOKE_H
     pygame.draw.rect(app.screen, C_BG2, (0, y0, W, h))
@@ -142,7 +185,8 @@ def draw_karaoke_strip(app) -> None:
     except Exception:
         sec = 0.0
 
-    cells = chord_measure_cells(app)
+    evs   = snapped_chord_events(app)
+    cells = chord_measure_cells(app, evs)
     vx = float(getattr(app.view, "viewport_x", 0.0))
 
     info_h = 20
@@ -213,7 +257,7 @@ def draw_karaoke_strip(app) -> None:
                 app.screen.blit(nt, (x0c + 3, yt0 + 1))
 
             # Cambios fuera de compás (eventos a mitad de este compás)
-            for s_ev, _n in (getattr(app, "chord_events", []) or []):
+            for s_ev, _n in evs:
                 s_ev = float(s_ev)
                 if sec0 + 0.05 < s_ev < sec1 - 0.05:
                     try:
@@ -321,8 +365,8 @@ def draw_karaoke_strip(app) -> None:
         mt = app.font_small.render(msg, True, C_ACCENT)
         app.screen.blit(mt, (W - mt.get_width() - 10, yi + 2))
     elif typing:
-        ht = app.font_tiny.render("Enter = aplicar · Esc = cancelar",
-                                  True, C_GRAY)
+        ht = app.font_tiny.render("Tab/↑↓ sugerencias · Enter aplicar · "
+                                  "Esc cancelar", True, C_GRAY)
         app.screen.blit(ht, (W - ht.get_width() - 10, yi + 4))
     elif sel is not None:
         ht = app.font_tiny.render("Enter editar · Supr quitar · Esc salir",

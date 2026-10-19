@@ -82,6 +82,7 @@ from .score import (
 from .ui import (
     draw_arp,
     draw_bottom_bar,
+    draw_chord_editor_popup,
     draw_corrido_panel,
     draw_countdown,
     draw_device_menu,
@@ -385,6 +386,9 @@ class BassKaraoke(
         self.chord_bar_target_sec     = None   # inicio del compás editado
         self.chord_bar_target_end_sec = None   # inicio del siguiente compás
         self.chord_bar_msg            = ""
+        self.chord_bar_sugg_idx       = -1     # fila resaltada del desplegable
+        self.chord_bar_sugg_cache     = []     # sugerencias mostradas
+        self.chord_bar_replace        = False  # el próximo carácter sustituye
 
         # ── Score pre-render ───────────────────────────────────────────
         self.score_renderer  = "verovio"
@@ -642,6 +646,9 @@ class BassKaraoke(
         self.chord_bar_target_sec = None
         self.chord_bar_target_end_sec = None
         self.chord_bar_msg        = ""
+        self.chord_bar_sugg_idx   = -1
+        self.chord_bar_sugg_cache = []
+        self.chord_bar_replace    = False
         # Re-generar partitura y estado dependiente de la canción
         self.view._score_cache    = {}
         self.view._score_surf     = None
@@ -1695,11 +1702,11 @@ class BassKaraoke(
         self.view.viewport_x = max(0.0, float(self.px_of(beat16)))
         self.view.target_x   = self.view.viewport_x
 
-        # Hacer que la partitura salte sin animación
-        self.view._score_scroll_x = self.view.viewport_x * (
-            (self.view._score_surf.get_width() if self.view._score_surf else 1)
-            / max(1, self.view._score_total16 * self.view.px_per_16th)
-        )
+        # Hacer que la partitura salte sin animación (misma base que draw_score)
+        from .ui.draw_score import score_img_x
+        self.view._score_scroll_x = (score_img_x(self, beat16)
+                                     if self.view._score_surf is not None
+                                     else 0.0)
 
         # Actualizar note_idx: primer nota que no haya pasado aún
         self.note_idx = len(self.notes)
@@ -2046,6 +2053,7 @@ class BassKaraoke(
         draw_pitch_panel(self)
         draw_stats_panel(self)
         draw_bottom_bar(self)
+        draw_chord_editor_popup(self)
         if self.counting_down:
             draw_countdown(self)
         if self.view.device_menu_open:
@@ -2549,6 +2557,9 @@ class BassKaraoke(
         self.chord_bar_buf            = ""
         self.chord_bar_target_sec     = None
         self.chord_bar_target_end_sec = None
+        self.chord_bar_sugg_idx       = -1
+        self.chord_bar_sugg_cache     = []
+        self.chord_bar_replace        = False
 
     def _chord_bar_selected_cell(self):
         cells = self._chord_bar_cells()
@@ -2556,6 +2567,31 @@ class BassKaraoke(
         if idx is None or not (0 <= idx < len(cells)):
             return None
         return cells[idx]
+
+    def _chord_bar_suggestions(self):
+        """Sugerencias para lo escrito en la barra (primero los de la canción)."""
+        from .chords import suggest_chords
+        used = [str(n) for _s, n in self.chord_events]
+        return suggest_chords(self.chord_bar_buf, used, limit=6)
+
+    def _chord_bar_sugg_reset(self):
+        """Recalcula el desplegable (al teclear, borrar o abrir la edición)."""
+        self.chord_bar_sugg_cache = self._chord_bar_suggestions()
+        self.chord_bar_sugg_idx   = -1
+
+    def chord_bar_sugg_layout(self):
+        """[(nombre, rect)] del desplegable de acordes sobre la barra."""
+        from .ui.draw_karaoke import CURSOR_X
+        cell = self._chord_bar_selected_cell()
+        sugg = list(self.chord_bar_sugg_cache or ())
+        if cell is None or not sugg:
+            return []
+        _i, _num, _raw, v0, _v1, _s0, _s1, _name, _ch = cell
+        x = int(self.px_of(v0) - self.view.viewport_x + CURSOR_X)
+        x = max(6, min(x, W - 190))
+        y = KARAOKE_Y + KARAOKE_H
+        return [(name, pygame.Rect(x, y + k * 20, 184, 20))
+                for k, name in enumerate(sugg)]
 
     def _chord_bar_edit_selected(self):
         """Empieza a editar el acorde vigente del compás seleccionado."""
@@ -2569,6 +2605,8 @@ class BassKaraoke(
         self.chord_bar_target_sec     = float(sec0)
         self.chord_bar_target_end_sec = float(sec1)
         self.chord_bar_msg            = ""
+        self.chord_bar_replace        = True   # teclear sustituye el nombre actual
+        self._chord_bar_sugg_reset()
 
     def _chord_bar_commit(self):
         """Aplica el nombre al compás: alinea el cambio al inicio del compás
@@ -2600,12 +2638,18 @@ class BassKaraoke(
         self.chord_bar_buf            = ""
         self.chord_bar_target_sec     = None
         self.chord_bar_target_end_sec = None
+        self.chord_bar_sugg_idx       = -1
+        self.chord_bar_sugg_cache     = []
+        self.chord_bar_replace        = False
 
     def _chord_bar_cancel(self):
         self.chord_bar_typing         = False
         self.chord_bar_buf            = ""
         self.chord_bar_target_sec     = None
         self.chord_bar_target_end_sec = None
+        self.chord_bar_sugg_idx       = -1
+        self.chord_bar_sugg_cache     = []
+        self.chord_bar_replace        = False
 
     def _chord_bar_delete(self):
         """Quita el cambio de acorde del compás (hereda el anterior)."""
@@ -2637,6 +2681,9 @@ class BassKaraoke(
         self.chord_bar_buf            = ""
         self.chord_bar_target_sec     = None
         self.chord_bar_target_end_sec = None
+        self.chord_bar_sugg_idx       = -1
+        self.chord_bar_sugg_cache     = []
+        self.chord_bar_replace        = False
         self.chord_bar_sel_measure    = idx
         self.chord_bar_msg            = ""
         return True
@@ -2789,12 +2836,35 @@ class BassKaraoke(
                     self._chord_bar_cancel()
                 elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                     self._chord_bar_commit()
+                elif event.key == pygame.K_TAB:
+                    sugg = self.chord_bar_sugg_cache or []
+                    if sugg:
+                        k = self.chord_bar_sugg_idx
+                        self.chord_bar_buf = sugg[k] if 0 <= k < len(sugg) \
+                            else sugg[0]
+                        self.chord_bar_replace = False
+                elif event.key in (pygame.K_UP, pygame.K_DOWN):
+                    sugg = self.chord_bar_sugg_cache or []
+                    if sugg:
+                        step = -1 if event.key == pygame.K_UP else 1
+                        k = self.chord_bar_sugg_idx
+                        k = 0 if k < 0 else max(0, min(len(sugg) - 1, k + step))
+                        self.chord_bar_sugg_idx = k
+                        self.chord_bar_buf      = sugg[k]
+                        self.chord_bar_replace  = False
                 elif event.key == pygame.K_BACKSPACE:
                     self.chord_bar_buf = self.chord_bar_buf[:-1]
+                    self.chord_bar_replace = False
+                    self._chord_bar_sugg_reset()
                 else:
                     ch = event.unicode
-                    if ch and ch.isprintable() and len(self.chord_bar_buf) < 8:
-                        self.chord_bar_buf += ch
+                    if ch and ch.isprintable():
+                        if self.chord_bar_replace:
+                            self.chord_bar_buf = ch
+                        elif len(self.chord_bar_buf) < 8:
+                            self.chord_bar_buf += ch
+                        self.chord_bar_replace = False
+                        self._chord_bar_sugg_reset()
                 return True
 
             # ── Menú funcionalidades opcionales ────────────────────────
@@ -3030,6 +3100,12 @@ class BassKaraoke(
             if self.chord_edit_open:
                 return True
             if self.chord_bar_typing:
+                if event.button == 1:
+                    for name, rect in self.chord_bar_sugg_layout():
+                        if rect.collidepoint(event.pos):
+                            self.chord_bar_buf = name
+                            self._chord_bar_commit()
+                            break
                 return True
             if event.button == 1 and self._header_chip_click(event.pos):
                 return True
