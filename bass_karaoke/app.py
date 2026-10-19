@@ -2529,17 +2529,30 @@ class BassKaraoke(
     #  EDICIÓN POR COMPÁS EN LA BARRA DE ACORDES (clic → Enter/Supr)
     # ══════════════════════════════════════════════════════════════════
     def _chord_bar_cells(self):
-        from .ui.draw_karaoke import chord_measure_cells
-        return chord_measure_cells(self)
+        from .ui.draw_karaoke import chord_measure_cells, snapped_chord_events
+        # Mismos acordes que pinta la tira (alineados a la rejilla): si no,
+        # el compás que se ve con acorde se editaría como si estuviera vacío.
+        return chord_measure_cells(self, snapped_chord_events(self))
 
     def _chord_bar_snapshot(self):
         return [(float(s), str(n)) for s, n in self.chord_events]
 
-    def _chord_bar_index_at(self, sec, tol=0.05):
+    def _chord_bar_index_at(self, sec, tol=0.05, snap_tol=0.30):
+        """Evento guardado que la tira muestra en `sec` (inicio de compás).
+
+        Si el evento está algo desplazado (guardado con el offset del MP3),
+        se acepta el más cercano dentro de la tolerancia de alineación.
+        """
+        sec  = float(sec)
+        best = None
+        best_d = None
         for i, (s, _n) in enumerate(self.chord_events):
-            if abs(float(s) - float(sec)) <= tol:
+            d = abs(float(s) - sec)
+            if d <= tol:
                 return i
-        return None
+            if d <= snap_tol and (best_d is None or d < best_d):
+                best, best_d = i, d
+        return best
 
     def _chord_bar_prev_name(self, sec):
         """Acorde vigente justo ANTES del inicio del compás."""
