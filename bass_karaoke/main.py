@@ -14,10 +14,13 @@ except Exception:
     except Exception:
         pass
 
-from .app import BassKaraoke
-
-
 def main():
+    from .logging_setup import setup_logging
+
+    setup_logging()
+    # Import tardío: configurar logging antes de arrastrar pygame/audio.
+    from .app import BassKaraoke
+
     app = BassKaraoke()
     app.run()
 

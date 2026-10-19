@@ -9,21 +9,27 @@ Pipeline:
      mínima + fusión de repeticiones).
   4. Entregar ``(start, end, midi)`` en segundos a `build.build_from_notes`.
 """
+
 from __future__ import annotations
 
+import logging
 import math
 import os
 import shutil
-import subprocess
-import sys
 
 import numpy as np
 
-from .config import (
-    SAMPLERATE, MIN_HZ, MAX_HZ, MPM_WIN, MPM_THRESHOLD,
-    HIGHPASS_HZ, LOWPASS_HZ,
-)
 from .audio.pitch_engine import _mpm_pitch
+from .config import (
+    HIGHPASS_HZ,
+    MAX_HZ,
+    MIN_HZ,
+    MPM_THRESHOLD,
+    MPM_WIN,
+    SAMPLERATE,
+)
+
+log = logging.getLogger(__name__)
 
 # Cortes del paso-bajo: el stem ya viene limpio; el mix necesita cortar más
 # (guitarra, voz y bombo) o el MPM se engancha a contenido no-bajo.
@@ -63,7 +69,7 @@ def load_audio(path, sr=SAMPLERATE):
         y, file_sr = librosa.load(path, sr=sr, mono=True)
         return y.astype(np.float32), sr
     except Exception as exc:
-        raise RuntimeError(f"No se pudo leer el audio {path}: {exc}")
+        raise RuntimeError(f"No se pudo leer el audio {path}: {exc}") from exc
 
 
 def _bandpass(y, sr, hp=HIGHPASS_HZ, lp=LP_STEM):
@@ -74,7 +80,7 @@ def _bandpass(y, sr, hp=HIGHPASS_HZ, lp=LP_STEM):
                          butter(4, lp, "lowpass", fs=sr, output="sos")])
         return sosfilt(sos, y).astype(np.float32)
     except Exception:
-        from .audio.pitch_engine import _hp_biquad, _lp_biquad, _apply_biquad
+        from .audio.pitch_engine import _apply_biquad, _hp_biquad, _lp_biquad
         sections = [_hp_biquad(hp, sr, 0.7071),
                     _lp_biquad(lp, sr, 0.5412),
                     _lp_biquad(lp, sr, 1.3066)]
@@ -126,7 +132,7 @@ def separate_bass_demucs(audio_path, out_dir, model="htdemucs"):
         demucs_main(["-n", model, "--out", out_dir, "--filename", "{stem}.{ext}",
                      audio_path])
     except Exception as exc:
-        print(f"[demucs] {exc}")
+        log.info(f"[demucs] {exc}")
         return None
     track = os.path.splitext(os.path.basename(audio_path))[0]
     for cand in (os.path.join(out_dir, model, track, "bass.wav"),

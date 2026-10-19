@@ -8,7 +8,12 @@ cuerda: el resultado es la "caja" clásica, desplazable por el mástil.
 La validación es por clase de tono (vale cualquier octava).
 """
 from .music import (
-    OPEN_MIDI, MAX_FRET, midi_to_hz, midi_name, midi_of, pc_match,
+    MAX_FRET,
+    OPEN_MIDI,
+    midi_name,
+    midi_of,
+    midi_to_hz,
+    pc_match,
 )
 
 SCALES = {

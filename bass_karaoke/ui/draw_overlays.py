@@ -6,13 +6,27 @@ Overlays de pantalla completa:
   - Menú de método de pitch (draw_pitch_menu)
 """
 import math
+
 import pygame
 
 from ..config import (
-    W, H, STRING_COLORS, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
-    C_PANEL, C_BG, C_BLUE, C_OVERLAY,
-    C_OK, C_ERR, C_GREEN, C_RED, C_WAIT,
-    PITCH_METHODS, MIN_HZ,
+    C_ACCENT,
+    C_BLUE,
+    C_DGRAY,
+    C_ERR,
+    C_GRAY,
+    C_GREEN,
+    C_OK,
+    C_OVERLAY,
+    C_PANEL,
+    C_RED,
+    C_WAIT,
+    C_WHITE,
+    MIN_HZ,
+    PITCH_METHODS,
+    STRING_COLORS,
+    H,
+    W,
 )
 
 
@@ -25,18 +39,15 @@ def draw_tuner(app) -> None:
     app.screen.blit(t, (W // 2 - t.get_width() // 2, 30))
 
     with app.pitch_lock:
-        det_hz   = app.detected_hz
-        det_note = app.detected_note
+        det_hz = app.detected_hz
 
     cents    = 0.0
     ref_note = "—"
-    ref_hz   = 0.0
     in_tune  = False
     if det_hz > MIN_HZ:
         midi_f   = 12 * math.log2(det_hz / 440.0) + 69
         midi_r   = round(midi_f)
         cents    = (midi_f - midi_r) * 100
-        ref_hz   = 440.0 * (2 ** ((midi_r - 69) / 12))
         names    = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
         ref_note = f"{names[midi_r % 12]}{midi_r // 12 - 1}"
         in_tune  = abs(cents) < 15
@@ -127,13 +138,13 @@ def draw_device_menu(app) -> None:
     else:
         row_h    = 28
         max_rows = (mh - 78) // row_h
-        start    = max(0, app.device_menu_sel - max_rows + 1)
+        start    = max(0, app.view.device_menu_sel - max_rows + 1)
         from ..audio import device_name_warning
         for i, (_, name) in enumerate(app.audio_devices):
             if i < start: continue
             if i - start >= max_rows: break
             ry     = my + 50 + (i - start) * row_h
-            is_sel = (i == app.device_menu_sel)
+            is_sel = (i == app.view.device_menu_sel)
             is_cur = (i == app.device_idx)
             if is_sel:
                 pygame.draw.rect(app.screen, C_DGRAY,
@@ -181,7 +192,7 @@ def draw_pitch_menu(app) -> None:
     row_h = 32
     for i, m in enumerate(PITCH_METHODS):
         ry     = my + 50 + i * row_h
-        is_sel = (i == app.pitch_menu_sel)
+        is_sel = (i == app.view.pitch_menu_sel)
         is_cur = (m == app.pitch_method)
         if is_sel:
             pygame.draw.rect(app.screen, C_DGRAY,
@@ -220,14 +231,14 @@ def draw_feature_menu(app) -> None:
     row_h    = 34
     top_y    = my + 50
     max_rows = (mh - 215) // row_h
-    start    = max(0, app.feature_menu_sel - max_rows + 1)
+    start    = max(0, app.view.feature_menu_sel - max_rows + 1)
 
     for i in range(start, start + max_rows):
         if i >= len(feats):
             break
         f  = feats[i]
         ry = top_y + (i - start) * row_h
-        is_sel = (i == app.feature_menu_sel)
+        is_sel = (i == app.view.feature_menu_sel)
         if is_sel:
             pygame.draw.rect(app.screen, C_DGRAY,
                              (mx + 6, ry - 2, mw - 12, row_h - 2),
@@ -259,7 +270,7 @@ def draw_feature_menu(app) -> None:
         app.screen.blit(b, (mx + mw - b.get_width() - 12, ry + 4))
 
     # ── Detalle de la funcionalidad seleccionada ─────────────────────
-    sel    = feats[app.feature_menu_sel]
+    sel    = feats[app.view.feature_menu_sel]
     dy     = top_y + max_rows * row_h + 12
     title  = app.font_small.render(f"▶ {sel['name']}", True, C_ACCENT)
     app.screen.blit(title, (mx + 12, dy))
@@ -329,12 +340,12 @@ def draw_song_menu(app) -> None:
     else:
         row_h    = 30
         max_rows = (mh - 78) // row_h
-        start    = max(0, app.song_menu_sel - max_rows + 1)
+        start    = max(0, app.view.song_menu_sel - max_rows + 1)
         for i, s in enumerate(app.songs):
             if i < start: continue
             if i - start >= max_rows: break
             ry     = my + 50 + (i - start) * row_h
-            is_sel = (i == app.song_menu_sel)
+            is_sel = (i == app.view.song_menu_sel)
             is_cur = (i == app.song_idx)
             if is_sel:
                 pygame.draw.rect(app.screen, C_DGRAY,

@@ -1,7 +1,6 @@
 """
 Todas las constantes de configuración, audio, UI y rutas de Bass Karaoke.
 """
-import os
 import sys
 from pathlib import Path
 

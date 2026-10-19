@@ -72,7 +72,7 @@ def estimate_chords(audio_path: str, bpm_hint: float = 0.0,
         sm.append(sorted(set(votes), key=votes.count)[-1])
     # Fusión de rachas + absorción de rachas de 1 beat
     runs = []
-    for i, v in enumerate(sm):
+    for v in sm:
         if runs and runs[-1][0] == v:
             runs[-1][1] += 1
         else:
@@ -115,7 +115,7 @@ def vocal_segments(vocals_path: str, sr: int = 22050, min_seg: float = 1.0,
     mask = rms > thr
     segs = []
     start = None
-    for t, on in zip(times, mask):
+    for t, on in zip(times, mask, strict=False):
         if on and start is None:
             start = float(t)
         elif not on and start is not None:
@@ -186,7 +186,7 @@ def load_song_map(path: str):
     if not path or not os.path.exists(path):
         return [], []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
         chords = [(float(s), str(n)) for s, n in d.get("chords", [])]
         lyrics = [(float(s), str(t)) for s, t in d.get("lyrics", [])]
@@ -205,7 +205,7 @@ def load_song_barlen(path: str, default: int = 4) -> int:
     try:
         if not path or not os.path.exists(path):
             return default
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
         b = int(d.get("barlen", default))
         return b if b in (2, 3, 4, 6) else default

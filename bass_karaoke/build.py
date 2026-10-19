@@ -349,7 +349,9 @@ def _add_note(meas, dur16, midi):
 def write_chords_json(path, segments, bpm, lyrics=None, barlen=BARLEN_DEFAULT):
     """Escribe <base>.chords.json con tiempos en segundos de PARTITURA."""
     import json
-    sec_of = lambda s16: round(s16 / 4.0 * 60.0 / bpm, 2)
+
+    def sec_of(s16):
+        return round(s16 / 4.0 * 60.0 / bpm, 2)
     chords = []
     for s16, root, minor in segments:
         name = NAMES_ES[root % 12] + ("m" if minor else "")

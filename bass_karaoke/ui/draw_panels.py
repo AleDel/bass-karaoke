@@ -7,15 +7,28 @@ Dibuja los paneles de la zona inferior:
   - Bottom bar
 """
 import math
+
 import pygame
 
 from ..config import (
-    W, H, LOWER_Y, LOWER_H, BOTTOM_Y,
-    PIANO_START_MIDI, PIANO_END_MIDI,
-    STRING_NAMES, STRING_COLORS,
-    C_BG, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE, C_PANEL, C_BLUE,
-    C_OK, C_ERR, C_WAIT, C_GREEN, C_RED,
-    PITCH_METHODS, MIN_HZ,
+    BOTTOM_Y,
+    C_ACCENT,
+    C_BLUE,
+    C_DGRAY,
+    C_ERR,
+    C_GRAY,
+    C_GREEN,
+    C_OK,
+    C_PANEL,
+    C_RED,
+    C_WAIT,
+    C_WHITE,
+    LOWER_H,
+    LOWER_Y,
+    STRING_COLORS,
+    STRING_NAMES,
+    H,
+    W,
 )
 
 

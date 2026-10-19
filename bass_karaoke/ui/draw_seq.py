@@ -7,16 +7,23 @@ La lógica vive en technique.py, arpeggios.py y scales.py; aquí se pinta.
 """
 import pygame
 
-from ..config import (
-    TAB_Y, NECK_Y, W,
-    C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
-    C_BLUE, C_GREEN, C_RED,
-    STRING_NAMES,
-)
-from .. import technique as tech_logic
 from .. import arpeggios as arp_logic
 from .. import scales as scale_logic
-from ..music import midi_of, midi_name
+from .. import technique as tech_logic
+from ..config import (
+    C_ACCENT,
+    C_BLUE,
+    C_DGRAY,
+    C_GRAY,
+    C_GREEN,
+    C_RED,
+    C_WHITE,
+    NECK_Y,
+    STRING_NAMES,
+    TAB_Y,
+    W,
+)
+from ..music import midi_name, midi_of
 from .staff import draw_mini_staff
 
 STAFF_W = 200

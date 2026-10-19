@@ -6,6 +6,9 @@ __pycache__/
 # Config personal del usuario (no subir)
 bass_karaoke_config.json
 
+# Logs de ejecución
+logs/
+
 # Archivos generados / salidas de test
 output_test.mei
 score_preview.png

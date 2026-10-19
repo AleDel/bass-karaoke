@@ -12,8 +12,12 @@ La validación usa altura exacta (misma octava): aquí importa la
 posición, no solo la clase de tono.
 """
 from .music import (
-    OPEN_MIDI, MAX_FRET, STRING_NAMES,
-    midi_to_hz, midi_name, midi_of, exact_match,
+    MAX_FRET,
+    STRING_NAMES,
+    exact_match,
+    midi_name,
+    midi_of,
+    midi_to_hz,
 )
 
 PATTERNS = {

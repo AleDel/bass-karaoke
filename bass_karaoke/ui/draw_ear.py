@@ -7,9 +7,16 @@ Ocupa la zona del tab (mástil y piano visibles). La nota suena oculta
 import pygame
 
 from ..config import (
-    TAB_Y, NECK_Y, W,
-    C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
-    C_BLUE, C_GREEN, C_RED,
+    C_ACCENT,
+    C_BLUE,
+    C_DGRAY,
+    C_GRAY,
+    C_GREEN,
+    C_RED,
+    C_WHITE,
+    NECK_Y,
+    TAB_Y,
+    W,
 )
 from ..training import LEVELS, accuracy
 from .staff import draw_mini_staff

@@ -3,12 +3,26 @@ Dibuja la tablatura scrolleable (zona TAB).
 """
 import math
 import time
+
 import pygame
 
 from ..config import (
-    W, TAB_Y, TAB_H, STRING_NAMES, STRING_COLORS, STRING_THICK,
-    C_BG2, C_ACCENT, C_DGRAY, C_SECTION, C_WHITE, C_GRAY,
-    C_OK, C_ERR, C_WAIT, C_GREEN, C_RED,
+    C_ACCENT,
+    C_BG2,
+    C_DGRAY,
+    C_ERR,
+    C_GRAY,
+    C_GREEN,
+    C_OK,
+    C_SECTION,
+    C_WAIT,
+    C_WHITE,
+    STRING_COLORS,
+    STRING_NAMES,
+    STRING_THICK,
+    TAB_H,
+    TAB_Y,
+    W,
 )
 
 
@@ -54,7 +68,7 @@ def draw_tab(app) -> None:
     if app.last_hit_alpha > 0:
         fade      = min(1.0, app.last_hit_alpha)
         alpha_int = int(fade * 255)
-        offset_px = int(-app.last_hit_delta16 * app.px_per_16th)
+        offset_px = int(-app.last_hit_delta16 * app.view.px_per_16th)
         offset_px = max(-160, min(160, offset_px))
         hit_x     = CURSOR_X + offset_px
 
@@ -82,9 +96,7 @@ def draw_tab(app) -> None:
         txt_s.set_alpha(alpha_int)
         app.screen.blit(txt_s, (CURSOR_X - txt.get_width() // 2, ty - 28))
 
-    vx      = int(app.viewport_x)
-    total16 = (app.notes[-1]["start16"] + app.notes[-1]["dur"]
-               if app.notes else 0)
+    vx      = int(app.view.viewport_x)
 
     # Intro: el bajo aún no ha entrado — decirlo en vez de mostrar vacío.
     if app.notes and app.beat_time < app.notes[0]["start16"] - 1:
@@ -155,7 +167,7 @@ def draw_tab(app) -> None:
             col = STRING_COLORS[note["string"]]
             r   = R_NORM
 
-        dur_px = int(note["dur"] * app.px_per_16th) - 2
+        dur_px = int(note["dur"] * app.view.px_per_16th) - 2
         if dur_px > r * 2 + 4 and not is_past:
             if is_cur:
                 pygame.draw.line(app.screen, col, (nx, ny), (nx + dur_px, ny), 3)

@@ -2,13 +2,24 @@
 Dibuja el teclado de piano (zona PIANO).
 """
 import math
+
 import pygame
 
 from ..config import (
-    PIANO_X, PIANO_Y, PIANO_W, PIANO_H,
-    PIANO_START_MIDI, PIANO_END_MIDI,
-    C_BG, C_DGRAY, C_GRAY, C_BLUE, C_OK, C_ERR, C_WAIT, C_ACCENT,
+    C_ACCENT,
+    C_BLUE,
+    C_DGRAY,
+    C_ERR,
+    C_GRAY,
+    C_OK,
+    C_WAIT,
     MIN_HZ,
+    PIANO_END_MIDI,
+    PIANO_H,
+    PIANO_START_MIDI,
+    PIANO_W,
+    PIANO_X,
+    PIANO_Y,
 )
 from .widgets import build_piano_keys
 
@@ -32,8 +43,8 @@ def draw_piano(app) -> None:
     col_cur = (C_OK  if app.note_match is True  else
                C_ERR if app.note_match is False else C_WAIT)
 
-    prev_midi = getattr(app, "preview_midi", None)
-    prev_on = prev_midi is not None and getattr(app, "preview_timer", 0) > 0
+    prev_midi = getattr(app.view, "preview_midi", None)
+    prev_on = prev_midi is not None and getattr(app.view, "preview_timer", 0) > 0
 
     # Pista del entrenador (H): ilumina la clase de tono objetivo
     tr_hint_on = (getattr(app, "training_open", False)
@@ -111,7 +122,7 @@ def draw_piano(app) -> None:
     pygame.draw.rect(app.screen, C_DGRAY, (px, py, pw, ph), 1)
     if prev_on:
         lbl_p = app.font_small.render(
-            f"{app.preview_name}  ·  {app.preview_label}  (clic otra tecla)",
+            f"{app.view.preview_name}  ·  {app.view.preview_label}  (clic otra tecla)",
             True, C_ACCENT)
     else:
         lbl_p = app.font_tiny.render(

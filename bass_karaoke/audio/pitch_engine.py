@@ -4,18 +4,33 @@ Motor de detección de pitch en tiempo real.
 La clase PitchEngine arranca un hilo de audio que captura del micrófono,
 aplica el método de pitch seleccionado y llama al callback on_update(hz, note).
 """
-import os
+
+import logging
 import math
+import os
 import threading
+from collections import Counter, deque
+
 import numpy as np
-from collections import deque, Counter
 
 from ..config import (
-    SAMPLERATE, CHUNK_SIZE, WIN_S, HOP_S, CONF_THRESH,
-    PITCH_HOLD_FRAMES, MIN_HZ, MAX_HZ, PESTO_ONNX_PATH,
-    LOWPASS_HZ, HIGHPASS_HZ, AUBIO_METHOD, AUBIO_FFTSIZE, AUBIO_TOLERANCE,
-    AUBIO_CONF_THRESH, AUBIO_SILENCE_DB, BASS_MAX_HZ,
-    MPM_WIN, MPM_THRESHOLD,
+    AUBIO_FFTSIZE,
+    AUBIO_METHOD,
+    AUBIO_SILENCE_DB,
+    AUBIO_TOLERANCE,
+    BASS_MAX_HZ,
+    CHUNK_SIZE,
+    HIGHPASS_HZ,
+    HOP_S,
+    LOWPASS_HZ,
+    MAX_HZ,
+    MIN_HZ,
+    MPM_THRESHOLD,
+    MPM_WIN,
+    PESTO_ONNX_PATH,
+    PITCH_HOLD_FRAMES,
+    SAMPLERATE,
+    WIN_S,
 )
 from ..utils import hz_to_note_name
 
@@ -32,10 +47,13 @@ except ImportError:
     PA_OK = False
 
 try:
-    from scipy.signal import butter as _sci_butter, sosfilt as _sci_sosfilt
+    from scipy.signal import butter as _sci_butter
+    from scipy.signal import sosfilt as _sci_sosfilt
     SCIPY_OK = True
 except ImportError:
     SCIPY_OK = False
+
+log = logging.getLogger(__name__)
 
 PITCH_AVAILABLE = AUBIO_OK and PA_OK
 
@@ -257,18 +275,36 @@ class PitchEngine:
         self.on_update       = on_update
         self.on_engine_label = on_engine_label or (lambda _: None)
         self.on_debug        = on_debug or (lambda *_: None)
-        self._running        = False
+        self._stop_evt       = threading.Event()
+        self._lifecycle      = threading.Lock()
         self._thread         = None
 
+    @property
+    def is_running(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
     def start(self):
-        self._running = True
-        self._thread  = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        """Arranca el hilo una sola vez (idempotente y seguro entre hilos)."""
+        with self._lifecycle:
+            if self.is_running:
+                return
+            # No limpiamos el flag hasta saber que no queda un hilo vivo:
+            # si el stop anterior agotó el timeout, reactivarlo dejaría dos
+            # hilos compitiendo por el micrófono.
+            self._stop_evt.clear()
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
 
     def stop(self, timeout: float = 1.5):
-        self._running = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
+        """Pide al hilo que termine y espera (sin bloquearse indefinidamente)."""
+        with self._lifecycle:
+            self._stop_evt.set()
+            thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout)
+            if thread.is_alive():
+                log.warning("PitchEngine: el hilo no terminó en %.1fs", timeout)
 
     # ─────────────────────────────────────────────────────────────────────────
     def _loop(self):
@@ -292,11 +328,11 @@ class PitchEngine:
                 import torchcrepe as _tc
                 _dev = "cuda" if _torch.cuda.is_available() else "cpu"
                 _model_size = "tiny" if method == "crepe-tiny" else "full"
-                print(f"[pitch] CREPE-{_model_size} ({_dev})")
+                log.info(f"[pitch] CREPE-{_model_size} ({_dev})")
                 self.on_engine_label(f"CREPE-{_model_size} ({_dev.upper()})")
                 _conf_thresh = 0.18
             except ImportError:
-                print("[pitch] torchcrepe no disponible → aubio")
+                log.info("[pitch] torchcrepe no disponible → aubio")
                 method = "aubio"
 
         if method == "pesto":
@@ -305,7 +341,7 @@ class PitchEngine:
                 from pesto import load_model as _pesto_load
                 _dev = "cuda" if _torch.cuda.is_available() else "cpu"
                 _step_ms = CHUNK_SIZE / SAMPLERATE * 1000
-                print(f"[pitch] PESTO streaming ({_dev})  step={_step_ms:.1f}ms")
+                log.info(f"[pitch] PESTO streaming ({_dev})  step={_step_ms:.1f}ms")
                 self.on_engine_label(f"PESTO ({_dev.upper()})")
                 _pesto_model = _pesto_load(
                     "mir-1k_g7",
@@ -320,7 +356,7 @@ class PitchEngine:
                 # PESTO da confianza baja en graves (0.1-0.4) → gate permisivo
                 _conf_thresh = 0.10
             except Exception as _e:
-                print(f"[pitch] PESTO no disponible ({_e}) → aubio")
+                log.info(f"[pitch] PESTO no disponible ({_e}) → aubio")
                 method = "aubio"
 
         if method == "pesto-onnx":
@@ -337,10 +373,10 @@ class PitchEngine:
                 _conf_thresh = 0.10
                 _pesto_onnx_warmup = 8
                 _pesto_onnx_cnt    = 0
-                print(f"[pitch] PESTO-ONNX  cache={_cache_size}  chunk={_chunk_audio}")
+                log.info(f"[pitch] PESTO-ONNX  cache={_cache_size}  chunk={_chunk_audio}")
                 self.on_engine_label("PESTO-ONNX (CPU)")
             except Exception as _e:
-                print(f"[pitch] PESTO-ONNX no disponible ({_e}) → aubio")
+                log.info(f"[pitch] PESTO-ONNX no disponible ({_e}) → aubio")
                 method = "aubio"
 
         if method == "aubio":
@@ -352,27 +388,30 @@ class PitchEngine:
                 # aubio ya devuelve pitch 0 cuando no hay nota; su confianza
                 # es poco fiable en graves → no gatear por ella.
                 _conf_thresh = 0.0
-                print(f"[pitch] aubio {AUBIO_METHOD}  fft={AUBIO_FFTSIZE}  "
+                log.info(f"[pitch] aubio {AUBIO_METHOD}  fft={AUBIO_FFTSIZE}  "
                       f"tol={AUBIO_TOLERANCE}  sin gate de confianza")
                 self.on_engine_label(f"aubio {AUBIO_METHOD}")
             else:
-                print("[pitch] aubio no disponible — sin detección")
+                log.info("[pitch] aubio no disponible — sin detección")
                 self.on_engine_label("sin pitch")
 
         if method == "mpm":
             # MPM no necesita init: usa mpm_buf + _mpm_pitch en el bucle.
             # Devuelve pitch 0 cuando no hay pico sobre el umbral → gate por pitch>0.
             _conf_thresh = 0.0
-            print(f"[pitch] MPM (McLeod)  win={MPM_WIN}  hop={HOP_S}")
+            log.info(f"[pitch] MPM (McLeod)  win={MPM_WIN}  hop={HOP_S}")
             self.on_engine_label("MPM McLeod")
 
         if method == "basic-pitch":
             try:
-                import soundfile as _sf
                 import tempfile as _tmpmod
+
+                import soundfile as _sf
                 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
-                from basic_pitch.inference import predict as _bp_predict, Model as _BP_Model
                 import pathlib as _pl
+
+                from basic_pitch.inference import Model as _BP_Model
+                from basic_pitch.inference import predict as _bp_predict
                 _bp_onnx = None
                 try:
                     import basic_pitch as _bp_pkg
@@ -384,11 +423,11 @@ class PitchEngine:
                     pass
                 if _bp_onnx:
                     _bp_model = _BP_Model(_bp_onnx)
-                    print(f"[pitch] Basic Pitch ONNX  {_bp_onnx}")
+                    log.info(f"[pitch] Basic Pitch ONNX  {_bp_onnx}")
                 else:
                     from basic_pitch import ICASSP_2022_MODEL_PATH as _BP_MODEL_PATH
                     _bp_model = _BP_Model(_BP_MODEL_PATH)
-                    print("[pitch] Basic Pitch (runtime por defecto)")
+                    log.info("[pitch] Basic Pitch (runtime por defecto)")
                 _bp_buf_sec    = 1.5
                 _bp_buf_n      = int(_bp_buf_sec * SAMPLERATE)
                 _bp_buf        = np.zeros(_bp_buf_n, dtype=np.float32)
@@ -400,7 +439,7 @@ class PitchEngine:
                 _bp_tmp.close()
                 self.on_engine_label("Basic Pitch (ONNX)")
             except Exception as _e:
-                print(f"[pitch] basic-pitch no disponible ({_e}) → aubio")
+                log.info(f"[pitch] basic-pitch no disponible ({_e}) → aubio")
                 method = "aubio"
 
         # ── Bucle de captura ─────────────────────────────────────────────────
@@ -413,17 +452,18 @@ class PitchEngine:
         hold_count = 0
         _debug_cnt  = 0
         _prefilter, _pf_state = _build_prefilter(SAMPLERATE)
-        print(f"[pitch] pre-filtro HP {HIGHPASS_HZ:.0f} Hz + LP {LOWPASS_HZ:.0f} Hz"
+        log.info(f"[pitch] pre-filtro HP {HIGHPASS_HZ:.0f} Hz + LP {LOWPASS_HZ:.0f} Hz"
               + ("  (scipy)" if SCIPY_OK else "  (biquads numpy)"))
 
         p = _pyaudio_mod.PyAudio()
+        stream = None
         try:
             stream = p.open(
                 format=_pyaudio_mod.paFloat32, channels=1, rate=SAMPLERATE,
                 input=True, input_device_index=self.device_id,
                 frames_per_buffer=_chunk_audio)
 
-            while self._running:
+            while not self._stop_evt.is_set():
                 try:
                     data    = stream.read(_chunk_audio, exception_on_overflow=False)
                     samples = np.frombuffer(data, dtype=np.float32).copy()
@@ -523,7 +563,7 @@ class PitchEngine:
                                 else:
                                     _bp_latest_hz = 0.0
                             except Exception as _bp_e:
-                                print(f"[basic-pitch] {_bp_e}")
+                                log.info(f"[basic-pitch] {_bp_e}")
                         pitch = _bp_latest_hz
                         conf  = 1.0 if (MIN_HZ <= pitch <= MAX_HZ) else 0.0
 
@@ -568,13 +608,14 @@ class PitchEngine:
                         self.on_update(0.0, "—", 0.0, "—")
 
                 except Exception as _e:
-                    print(f"[audio loop] {_e}")
+                    log.info(f"[audio loop] {_e}")
         finally:
-            try:
-                stream.stop_stream()
-                stream.close()
-            except Exception:
-                pass
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
             p.terminate()
             if _bp_tmppath:
                 try:

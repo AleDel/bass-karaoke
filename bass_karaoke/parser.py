@@ -2,10 +2,14 @@
 Parser de archivos MusicXML para Bass Karaoke.
 Devuelve notas, secciones y BPM inicial.
 """
+
+import logging
 import xml.etree.ElementTree as ET
 
 from .config import NECK_FRETS
 from .utils import fret_to_hz, hz_to_note_name
+
+log = logging.getLogger(__name__)
 
 # Semitonos de cada nota (C=0 … B=11) — para derivar traste/cuerda del pitch
 _SEMITONES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
@@ -234,7 +238,7 @@ def parse_musicxml(filepath: str):
                 "dur_type": c["dur_type"],
                 "transposed": down,
             })
-        print(f"[Parser] Sin tablatura: {len(notes)} notas derivadas del pitch "
+        log.info(f"[Parser] Sin tablatura: {len(notes)} notas derivadas del pitch "
               f"({stats['in_range']} en rango, {stats['transposed']} transportadas, "
               f"{stats['dropped']} descartadas)")
 
@@ -274,7 +278,8 @@ def parse_grace_notes(tg_path: str, notes: list) -> list:
     Devuelve lista de dicts con:
       fret, string, transition, main_note_idx, main_start16
     """
-    import zipfile, os
+    import os
+    import zipfile
     if not os.path.exists(tg_path):
         return []
     try:

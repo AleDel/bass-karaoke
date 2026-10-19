@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bass-karaoke"
+version = "3.0.0"
+description = "Karaoke de bajo eléctrico con tablatura, pitch en tiempo real y partitura"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pygame==2.6.1",
+    "numpy==1.26.4",
+]
+
+[project.optional-dependencies]
+# Funcionalidades opcionales (se instalan bajo demanda desde el menú I).
+pitch = ["PyAudio>=0.2.14", "aubio>=0.4.9"]
+stretch = ["librosa>=0.11.0", "sounddevice>=0.5.2"]
+score = ["verovio>=6.1.0", "CairoSVG>=2.9.0"]
+dev = ["ruff>=0.17.1", "pytest>=9.1.1"]
+
+[project.scripts]
+bass-karaoke = "bass_karaoke.main:main"
+
+# ── Lint / formato ────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+    ".venv",
+    "build",
+    "dist",
+    "console_dist",
+    "build_console",
+    "features",
+]
+
+[tool.ruff.lint]
+# Conjunto conservador: errores reales + imports + pyupgrade + bugbear.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",   # longitud de línea: la maneja el formateador, no bloquea
+    "E741",   # nombres ambiguos (l, I, O) heredados
+    "E701",   # varias sentencias tras ':' (estilo del autor, denso pero válido)
+    "E702",   # varias sentencias tras ';'
+    "E402",   # import no al inicio (imports perezosos/condicionales intencionales)
+    "B008",   # default mutable en firmas (patrón pygame existente)
+    "UP031",  # %-format heredado en mensajes de log
+    "UP032",  # .format() heredado
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Los scripts de tests/ y las utilidades de build pueden importar tarde.
+"tests/*" = ["E402", "F401", "F841"]
+"build.py" = ["E402", "F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bass_karaoke"]
+
+# ── Tests ─────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["."]
+addopts = "-q"
+# Los scripts manuales de tests/ (detector de pitch) no son unit tests.
+norecursedirs = ["tests", ".venv", "songs", "build", "dist", "console_dist"]

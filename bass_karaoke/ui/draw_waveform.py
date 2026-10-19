@@ -18,8 +18,14 @@ CURSOR_X), y el tramo ya reproducido (izquierda del playhead) se resalta.
 import pygame
 
 from ..config import (
-    W, WAVEFORM_Y, WAVEFORM_H,
-    C_BG2, C_ACCENT, C_RED, C_GRAY, C_PANEL,
+    C_ACCENT,
+    C_BG2,
+    C_GRAY,
+    C_PANEL,
+    C_RED,
+    WAVEFORM_H,
+    WAVEFORM_Y,
+    W,
 )
 
 CURSOR_X   = W // 3
@@ -46,14 +52,15 @@ def draw_waveform_strip(app):
 
     cy  = y0 + h // 2
     amp = max(2, h // 2 - 8)
-    vx  = app.viewport_x
-    ppt = app.px_per_16th or 1.0
+    vx  = app.view.viewport_x
+    ppt = app.view.px_per_16th or 1.0
     wmin, wmax = wave
 
     offset = float(app.mp3_offset_sec)
     s0     = app._bass_start16()
     start  = float(getattr(app, "song_start_sec", 0.0))
-    sec_at = lambda s16: app._eff_seconds(s16, offset)
+    def sec_at(s16):
+        return app._eff_seconds(s16, offset)
 
     phase = app.grid_phase16()
     for s16 in app.bar_starts16():

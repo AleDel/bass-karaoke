@@ -10,10 +10,15 @@ aguda (5 semitonos más alta), así el molde se desplaza intacto por
 el mástil al cambiar de tonalidad. Los dedos son sugeridos, con el
 índice/medio anclados en la raíz según la cualidad.
 """
-import math
 
 from .music import (
-    OPEN_MIDI, MAX_FRET, midi_to_hz, midi_name, midi_of, pc_of_hz, tone_pos,
+    MAX_FRET,
+    OPEN_MIDI,
+    midi_name,
+    midi_of,
+    midi_to_hz,
+    pc_of_hz,
+    tone_pos,
 )
 
 # Semitonos de la 3ª según la cualidad del acorde

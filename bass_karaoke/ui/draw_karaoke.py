@@ -19,11 +19,20 @@ import math
 
 import pygame
 
-from ..config import (
-    KARAOKE_Y, KARAOKE_H, W,
-    C_BG2, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE, C_GREEN, C_PANEL, C_RED,
-)
 from ..chords import lyric_at
+from ..config import (
+    C_ACCENT,
+    C_BG2,
+    C_DGRAY,
+    C_GRAY,
+    C_GREEN,
+    C_PANEL,
+    C_RED,
+    C_WHITE,
+    KARAOKE_H,
+    KARAOKE_Y,
+    W,
+)
 
 CURSOR_X = W // 3
 _BEAT16 = 4          # una negra = 4 dieciseisavos
@@ -59,7 +68,7 @@ def chord_measure_cells(app):
     ms = list(getattr(app, "measure_starts", []) or [])
     bar16 = max(4, int(getattr(app, "beats_per_bar", 4) or 4) * 4)
     if not ms:
-        total = float(getattr(app, "_score_total16", 0) or 0)
+        total = float(getattr(app.view, "_score_total16", 0) or 0)
         if total <= 0:
             return []
         n = int(math.ceil(total / bar16))
@@ -112,7 +121,7 @@ def chord_measure_hit_test(app, pos):
     yt0, th = chord_timeline_rect()
     if not (0 <= x <= W and yt0 <= y <= yt0 + th):
         return None
-    vx = float(getattr(app, "viewport_x", 0.0))
+    vx = float(getattr(app.view, "viewport_x", 0.0))
     cells = chord_measure_cells(app)
     for i, cell in enumerate(cells):
         v0, v1 = cell[3], cell[4]
@@ -134,8 +143,7 @@ def draw_karaoke_strip(app) -> None:
         sec = 0.0
 
     cells = chord_measure_cells(app)
-    phase = float(app.grid_phase16())
-    vx = float(getattr(app, "viewport_x", 0.0))
+    vx = float(getattr(app.view, "viewport_x", 0.0))
 
     info_h = 20
     yt0, th = chord_timeline_rect()

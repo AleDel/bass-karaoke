@@ -8,9 +8,14 @@ Muestra 4 líneas horizontales con los números de traste sobre ellas.
 import pygame
 
 from ..config import (
-    W, GUITARTAB_Y, GUITARTAB_H,
-    STRING_NAMES, STRING_COLORS,
-    C_BG2, C_ACCENT, C_DGRAY, C_GRAY, C_WHITE,
+    C_ACCENT,
+    C_DGRAY,
+    C_GRAY,
+    GUITARTAB_H,
+    GUITARTAB_Y,
+    STRING_COLORS,
+    STRING_NAMES,
+    W,
 )
 
 _BG = (16, 16, 30)   # fondo (igual que C_BG2)
@@ -55,8 +60,8 @@ def draw_guitartab(app) -> None:
     # ── Función de mapeo beat→screen_x, sincronizada con la partitura ─────────
     # Si hay datos de Verovio (_score_note_xs) usa sus posiciones reales;
     # si no, cae de vuelta al espaciado lineal del tab grande.
-    xs       = app._score_note_xs          # lista de (b16, img_x)
-    blit_x   = CURSOR_X - int(app._score_scroll_x)  # misma base que draw_score
+    xs       = app.view._score_note_xs          # lista de (b16, img_x)
+    blit_x   = CURSOR_X - int(app.view._score_scroll_x)  # misma base que draw_score
 
     def note_screen_x(b16):
         if xs:
@@ -68,10 +73,7 @@ def draw_guitartab(app) -> None:
                     t = (b16 - b0) / (b1 - b0) if b1 > b0 else 0.0
                     return blit_x + x0 + t * (x1 - x0)
         # fallback lineal
-        return app.px_of(b16) - int(app.viewport_x) + CURSOR_X
-
-    total16 = app.notes[-1]["start16"] + app.notes[-1]["dur"]
-    vx      = int(app.viewport_x)
+        return app.px_of(b16) - int(app.view.viewport_x) + CURSOR_X
 
     # ── Líneas de compás (usa coordenadas del score si hay xs) ───────────────
     # Rejilla real del MusicXML (respeta la métrica: 3/4 → cada 12 dieciseisavos)

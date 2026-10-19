@@ -10,13 +10,17 @@ La instalación usa pip de forma embebida (funciona también dentro de un
 ejecutable PyInstaller, que lleva pip incluido). En modo desarrollo, si el
 intérprete no tiene pip, se intenta ``python -m pip`` como alternativa.
 """
+
+import contextlib
 import io
+import logging
 import os
 import re
-import sys
-import contextlib
 import shutil
+import sys
 import threading
+
+log = logging.getLogger(__name__)
 
 # ── Registro de funcionalidades ──────────────────────────────────────────────
 #  id        : identificador interno
@@ -197,7 +201,7 @@ def features_dir() -> str:
 def _patch_frozen_quirks():
     """Corrige paquetes instalados bajo demanda que detectan PyInstaller.
 
-    Algunos paquetes (p. ej. cairosvg) comprueban ``sys.frozen`` / 
+    Algunos paquetes (p. ej. cairosvg) comprueban ``sys.frozen`` /
     ``sys._MEIPASS`` para localizar sus archivos de datos dentro del bundle
     del ejecutable. Aquí se instalan en ``features/`` (fuera del .exe), así
     que ese camino no existe y falla (p. ej. cairosvg lee su archivo VERSION).
@@ -211,7 +215,7 @@ def _patch_frozen_quirks():
     if not os.path.isfile(init):
         return
     try:
-        with open(init, "r", encoding="utf-8") as fh:
+        with open(init, encoding="utf-8") as fh:
             text = fh.read()
         new = re.sub(
             r"if hasattr\(sys,\s*'frozen'\):.*?ROOT = Path\(__file__\)\.resolve\(\)\.parent",
@@ -222,9 +226,9 @@ def _patch_frozen_quirks():
         if new != text:
             with open(init, "w", encoding="utf-8") as fh:
                 fh.write(new)
-            print("[features] cairosvg: ruta de datos corregida para ejecutable")
+            log.info("[features] cairosvg: ruta de datos corregida para ejecutable")
     except Exception as exc:
-        print(f"[features] aviso: no se pudo parchear cairosvg: {exc}")
+        log.warning(f"[features] aviso: no se pudo parchear cairosvg: {exc}")
 
 
 def ensure_on_path():
@@ -274,7 +278,7 @@ def session_flag(fid: str):
             from .audio import VARSPEED_OK
             return bool(VARSPEED_OK)
         if fid == "verovio":
-            from .score import VEROVIO_OK, CAIROSVG_OK
+            from .score import CAIROSVG_OK, VEROVIO_OK
             return bool(VEROVIO_OK and CAIROSVG_OK)
         if fid == "music21":
             from .score import MUSIC21_OK
@@ -285,7 +289,47 @@ def session_flag(fid: str):
 
 
 # ── pip ──────────────────────────────────────────────────────────────────────
+# Solo aceptamos nombres de paquete/versión normales. Rechazar lo que empiece
+# por "-" evita que una entrada del registro (o un futuro catálogo dinámico)
+# se interprete como flag de pip (p. ej. "--index-url" o "-r fichero").
+_PKG_SPEC_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.\-]*"          # nombre (aubio, basic-pitch…)
+    r"(?:\[[A-Za-z0-9_,\-]+\])?"             # extras opcionales: pkg[extra]
+    r"(?:(?:==|!=|<=|>=|~=|<|>)[A-Za-z0-9_.\-]+)?$"
+)
+
+# pip escribe en features/ y parchea ScriptMaker: dos instalaciones a la vez
+# corromperían el estado. Se serializa todo el acceso.
+_PIP_LOCK = threading.Lock()
+
+
+def _validate_spec(spec: str) -> str:
+    """Normaliza y valida una especificación de paquete antes de pasarla a pip."""
+    spec = (spec or "").strip()
+    if spec.startswith("-") or not _PKG_SPEC_RE.match(spec):
+        raise ValueError(f"especificación de paquete inválida: {spec!r}")
+    return spec
+
+
+def _is_metadata_dir(entry: str, stem: str) -> bool:
+    """¿`entry` es el metadata (.dist-info/.egg-info) del paquete `stem`?
+
+    Compara con el separador de versión para no borrar paquetes cuyo nombre
+    empieza igual (p. ej. al quitar ``torch`` no debe tocar ``torchvision``).
+    """
+    low = entry.lower()
+    if not (low.endswith(".dist-info") or low.endswith(".egg-info")):
+        return False
+    return low == f"{stem}.egg-info" or low.startswith(f"{stem}-")
+
+
 def _run_pip(args, on_log=None):
+    """Serializa el acceso a pip (ver ``_PIP_LOCK``)."""
+    with _PIP_LOCK:
+        return _run_pip_locked(args, on_log)
+
+
+def _run_pip_locked(args, on_log=None):
     """Ejecuta pip (embebido si es posible, si no por subproceso) y devuelve el código."""
     def log(msg):
         if on_log:
@@ -365,10 +409,12 @@ def _install_sync(fid: str, on_log=None) -> tuple:
         dep = by_id(dep_id)
         if on_log:
             on_log(f"[features] dependencia: {dep['name']}")
-        code = _run_pip([*_base_args(target), *dep["packages"]], on_log)
+        specs = [_validate_spec(p) for p in dep["packages"]]
+        code = _run_pip([*_base_args(target), *specs], on_log)
         if code != 0:
             return False, f"Fallo al instalar {dep['name']} (pip={code})"
-    code = _run_pip([*_base_args(target), *f["packages"]], on_log)
+    specs = [_validate_spec(p) for p in f["packages"]]
+    code = _run_pip([*_base_args(target), *specs], on_log)
     if code != 0:
         return False, f"Fallo al instalar {f['name']} (pip={code})"
     ensure_on_path()
@@ -382,16 +428,16 @@ def _uninstall_sync(fid: str, on_log=None) -> tuple:
         return True, "No hay nada que quitar."
     removed = []
     for pkg in f["packages"]:
-        base = pkg.split(">=")[0].split("==")[0]
-        stem = base.replace("-", "_")
+        base = re.split(r"[=<>!~]", _validate_spec(pkg), maxsplit=1)[0]
+        stem = base.split("[")[0].replace("-", "_")
         # Carpeta del paquete (p. ej. torch, torchcrepe, onnxruntime, scipy…)
-        if os.path.isdir(os.path.join(target, stem)):
-            shutil.rmtree(os.path.join(target, stem), ignore_errors=True)
+        pkg_dir = os.path.join(target, stem)
+        if os.path.isdir(pkg_dir):
+            shutil.rmtree(pkg_dir, ignore_errors=True)
             removed.append(stem)
-        # metadata dist-info / egg-info
+        # metadata dist-info / egg-info (sin tocar paquetes de prefijo común)
         for entry in list(os.listdir(target)):
-            low = entry.lower()
-            if low.startswith(stem) and (low.endswith(".dist-info") or low.endswith(".egg-info")):
+            if _is_metadata_dir(entry, stem):
                 shutil.rmtree(os.path.join(target, entry), ignore_errors=True)
     if not os.listdir(target):
         shutil.rmtree(target, ignore_errors=True)

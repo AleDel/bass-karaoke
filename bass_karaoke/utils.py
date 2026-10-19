@@ -2,9 +2,10 @@
 Funciones de utilidad: conversión Hz↔nota, cálculo de trastes, comparación de notas.
 """
 import math
+
 import numpy as np
 
-from .config import STRING_OPEN_HZ, MIN_HZ, MAX_HZ
+from .config import MAX_HZ, MIN_HZ, STRING_OPEN_HZ
 
 
 def fret_to_hz(fret: int, string: int) -> float:

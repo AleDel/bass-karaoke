@@ -1,17 +1,21 @@
 """
 Renderizador de partitura usando music21 (con MuseScore o dibujo manual con pygame).
 """
-import os
+
+import logging
+
 import pygame
 
 from ..config import MUSICXML_PATH, SCORE_H, W
 
+log = logging.getLogger(__name__)
+
 MUSIC21_OK = False
 try:
-    import music21 as _music21_mod
+    import music21 as _music21_mod  # noqa: F401
     MUSIC21_OK = True
 except ImportError:
-    print("[WARN] music21 no encontrado — pip install music21")
+    log.warning("[WARN] music21 no encontrado — pip install music21")
 
 # Mapeo step → diatónico relativo (C=0, D=1, ..., B=6)
 _STEP_DIA7 = {'C': 0, 'D': 1, 'E': 2, 'F': 3, 'G': 4, 'A': 5, 'B': 6}
@@ -60,12 +64,12 @@ def init_score_surface_music21(notes: list, musicxml_path: str = MUSICXML_PATH):
         surf, note_xs = _draw_score_m21_strip(
             notes, bar_ql, bottom_diatonic, diatonic_offset)
 
-        print(f"[Music21] {surf.get_width()}×{surf.get_height()}px  "
+        log.info(f"[Music21] {surf.get_width()}×{surf.get_height()}px  "
               f"notas={len(notes)}  render=manual")
         return surf, note_xs
 
     except Exception as _e:
-        print(f"[Music21 ERROR] {_e}")
+        log.error(f"[Music21 ERROR] {_e}")
         import traceback
         traceback.print_exc()
         return None, []

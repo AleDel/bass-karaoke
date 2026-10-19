@@ -2,15 +2,37 @@
 Dibuja el mástil del bajo (zona NECK).
 """
 import math
+
 import pygame
 
 from ..config import (
-    NECK_Y, NECK_H, NECK_W, NECK_AREA_X, NECK_AREA_W, NECK_NUT_X, NECK_LABEL_W,
-    NECK_FRETS, NECK_DOT_FRETS, NECK_OCT_FRETS,
-    STRING_NAMES, STRING_COLORS, STRING_THICK,
-    C_BG, C_DGRAY, C_GRAY, C_BLUE, C_OK, C_ERR, C_WAIT, C_WHITE,
-    C_WOOD, C_WOOD2, C_NUT, C_FRET, C_DOT, C_ACCENT,
+    C_ACCENT,
+    C_BLUE,
+    C_DGRAY,
+    C_DOT,
+    C_ERR,
+    C_FRET,
+    C_GRAY,
+    C_NUT,
+    C_OK,
+    C_WAIT,
+    C_WHITE,
+    C_WOOD,
+    C_WOOD2,
     MIN_HZ,
+    NECK_AREA_W,
+    NECK_AREA_X,
+    NECK_DOT_FRETS,
+    NECK_FRETS,
+    NECK_H,
+    NECK_LABEL_W,
+    NECK_NUT_X,
+    NECK_OCT_FRETS,
+    NECK_W,
+    NECK_Y,
+    STRING_COLORS,
+    STRING_NAMES,
+    STRING_THICK,
 )
 
 
@@ -118,7 +140,7 @@ def draw_neck(app) -> None:
     app.screen.blit(lbl_n, (nx0 + 4, ny - 13))
 
     # ── Mapa de notas de la canción (H para activar) ──────────────────────────
-    if getattr(app, 'neck_map', False) and app.notes:
+    if getattr(app.view, 'neck_map', False) and app.notes:
         # Calcular qué (fret, string) aparecen en la canción y cuántas veces
         from collections import Counter
         freq = Counter((n['fret'], n['string']) for n in app.notes)
@@ -235,8 +257,8 @@ def draw_neck(app) -> None:
             app.screen.blit(lb, (xc - lb.get_width() // 2, yc - 28))
 
     # ── Modo aprendizaje: nota pulsada con el ratón (encima de todo) ──
-    prev = getattr(app, "preview_fret_str", None)
-    if prev and getattr(app, "preview_timer", 0) > 0:
+    prev = getattr(app.view, "preview_fret_str", None)
+    if prev and getattr(app.view, "preview_timer", 0) > 0:
         pf, ps = prev
         xc = int(note_x(pf))
         yc = int(STR_Y.get(ps, 0))
@@ -244,12 +266,12 @@ def draw_neck(app) -> None:
             pygame.draw.circle(app.screen, C_ACCENT, (xc, yc), 13, 3)
             pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), 10)
             pygame.draw.circle(app.screen, C_ACCENT, (xc, yc), 10, 1)
-            nm = app.font_small.render(getattr(app, "preview_name", ""),
+            nm = app.font_small.render(getattr(app.view, "preview_name", ""),
                                         True, C_ACCENT)
             app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 30))
             # Etiqueta completa (nota + traste + cuerda + Hz)
-            hz = getattr(app, "preview_hz", 0.0) or 0.0
-            full = f"{app.preview_label}  {hz:.1f} Hz" if hz else app.preview_label
+            hz = getattr(app.view, "preview_hz", 0.0) or 0.0
+            full = f"{app.view.preview_label}  {hz:.1f} Hz" if hz else app.view.preview_label
             fl = app.font_small.render(full, True, C_ACCENT)
             bx = min(max(xc - fl.get_width() // 2, nx0 + 4), nx0 + nw - fl.get_width() - 4)
             bg = pygame.Surface((fl.get_width() + 12, fl.get_height() + 6))

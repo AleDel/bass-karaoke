@@ -2,8 +2,11 @@
 Reproductor de audio con time-stretch (librosa + sounddevice).
 Permite cambiar el tempo sin alterar el tono (pitch-preserving).
 """
-import threading
+
+import logging
 import os
+import threading
+
 import numpy as np
 
 from ..config import SAMPLERATE
@@ -21,6 +24,8 @@ try:
 except ImportError:
     SOUNDFILE_OK = False
 
+log = logging.getLogger(__name__)
+
 
 def load_mp3_samples(path: str):
     """Decodifica un MP3 a (mono float32, sr) con soundfile/libsoundfile.
@@ -36,7 +41,7 @@ def load_mp3_samples(path: str):
             y = y.mean(axis=1)
         return np.asarray(y, dtype=np.float32), int(sr)
     except Exception as e:
-        print(f"[waveform] error decodificando {os.path.basename(path)}: {e}")
+        log.error(f"[waveform] error decodificando {os.path.basename(path)}: {e}")
         return None, 0
 
 
@@ -78,10 +83,10 @@ class VarispeedPlayer:
             self.sr             = SAMPLERATE
             self._loaded        = True
             dur = len(arr) / SAMPLERATE
-            print(f"[TimeStretch] {os.path.basename(path)}  {dur:.1f}s  frames={len(arr)}")
+            log.info(f"[TimeStretch] {os.path.basename(path)}  {dur:.1f}s  frames={len(arr)}")
             return True
         except Exception as e:
-            print(f"[TimeStretch ERROR al cargar] {e}")
+            log.error(f"[TimeStretch ERROR al cargar] {e}")
             return False
 
     def _callback(self, outdata, frames, time_info, status):
@@ -162,7 +167,7 @@ class VarispeedPlayer:
         self.stretching = True
         try:
             orig = self.data_orig
-            print(f"[TimeStretch] aplicando rate={ratio:.3f}  ({ratio:.0%} tempo)  …")
+            log.info(f"[TimeStretch] aplicando rate={ratio:.3f}  ({ratio:.0%} tempo)  …")
             ch0 = librosa.effects.time_stretch(orig[:, 0], rate=ratio)
             ch1 = librosa.effects.time_stretch(orig[:, 1], rate=ratio)
             new_data = np.stack([ch0, ch1], axis=1).astype(np.float32)
@@ -172,9 +177,9 @@ class VarispeedPlayer:
                 self.data           = new_data
                 self._applied_ratio = ratio
                 self.pos            = max(0.0, min(new_pos, len(new_data) - 1))
-            print(f"[TimeStretch] listo  frames={len(new_data)}  dur={len(new_data)/self.sr:.1f}s")
+            log.info(f"[TimeStretch] listo  frames={len(new_data)}  dur={len(new_data)/self.sr:.1f}s")
         except Exception as e:
-            print(f"[TimeStretch ERROR] {e}")
+            log.error(f"[TimeStretch ERROR] {e}")
         finally:
             self.stretching = False
             if abs(self._target_ratio - self._applied_ratio) > 0.005:

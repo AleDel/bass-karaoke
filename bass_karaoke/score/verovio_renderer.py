@@ -1,10 +1,14 @@
 """
 Renderizador de partitura usando Verovio + cairosvg → pygame.Surface.
 """
+
+import logging
 import os
 import xml.etree.ElementTree as ET
 
 from ..config import MUSICXML_PATH, SCORE_H
+
+log = logging.getLogger(__name__)
 
 VEROVIO_OK  = False
 CAIROSVG_OK = False
@@ -25,15 +29,15 @@ try:
                 if not os.path.exists(_dst):
                     _shutil.copy2(_cand, _dst)
             break
-    print("[Verovio] tuning-glyphnames.json instalado en", _vrv_data)
+    log.info(f"[Verovio] tuning-glyphnames.json instalado en {_vrv_data}")
 except ImportError:
-    print("[WARN] verovio no encontrado — pip install verovio")
+    log.warning("[WARN] verovio no encontrado — pip install verovio")
 
 try:
-    import cairosvg as _cairosvg_mod
+    import cairosvg as _cairosvg_mod  # noqa: F401
     CAIROSVG_OK = True
 except ImportError:
-    print("[WARN] cairosvg no encontrado — pip install cairosvg")
+    log.warning("[WARN] cairosvg no encontrado — pip install cairosvg")
 
 
 def strip_tab_staff(xml_str: str) -> str:
@@ -145,9 +149,10 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
     """
     import re
     from io import BytesIO
+
+    import cairosvg
     import pygame
     import verovio
-    import cairosvg
 
     try:
         vrv = verovio.toolkit()
@@ -164,7 +169,7 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
             "header":           "none",
         })
 
-        with open(musicxml_path, "r", encoding="utf-8") as f:
+        with open(musicxml_path, encoding="utf-8") as f:
             raw_xml = f.read()
         clean_xml = strip_tab_staff(raw_xml)
         vrv.loadData(clean_xml)
@@ -334,12 +339,14 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
         note_xs.sort(key=lambda t: t[0])
 
         mapped = len([n for n in notes if n["start16"] in start16_to_x])
-        print(f"[Verovio] {surf.get_width()}×{surf.get_height()}px  "
+        log.info(f"[Verovio] {surf.get_width()}×{surf.get_height()}px  "
               f"notas mapeadas={mapped}/{len(notes)}  "
               f"timemap={len(id_to_qstamp)}  svg_notas={len(note_x_by_id)}")
         return surf, note_xs
 
     except Exception as _e:
-        print(f"[Verovio ERROR] {_e}")
-        import traceback; traceback.print_exc()
+        log.error(f"[Verovio ERROR] {_e}")
+        import traceback
+
+        traceback.print_exc()
         return None, []

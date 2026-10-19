@@ -7,7 +7,7 @@ a arriba: Sol2–Si2–Re3–Fa3–La3. Incluye sostenidos y líneas auxiliares.
 """
 import pygame
 
-from ..config import C_GRAY, C_WHITE, C_DGRAY
+from ..config import C_DGRAY, C_GRAY, C_WHITE
 
 _LINE_SP = 11          # píxeles entre líneas
 _LEDGER = 16          # semiancho de línea auxiliar / nota
@@ -30,7 +30,6 @@ def _dia(midi: int) -> tuple:
 
 def staff_height(px_above: int = 3, px_below: int = 3) -> int:
     """Alto total necesario (líneas + auxiliares + etiquetas)."""
-    half = _LINE_SP / 2.0
     return int(4 * _LINE_SP + (px_above + px_below) * _LINE_SP + 26)
 
 

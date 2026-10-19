@@ -8,8 +8,11 @@ La tónica se mueve por la cuerda A; la geometría es relativa
 La validación es por clase de tono (vale cualquier octava).
 """
 from .music import (
-    OPEN_MIDI, MAX_FRET, midi_to_hz, midi_name, midi_of,
-    pc_match, tone_pos,
+    midi_name,
+    midi_of,
+    midi_to_hz,
+    pc_match,
+    tone_pos,
 )
 
 QUALITIES = {
@@ -27,7 +30,7 @@ def build_arpeggio(qid: int, root_fret: int) -> list:
     f = max(0, min(12, int(root_fret)))
     anchor = q["anchor"]
     up = []
-    for iv, deg in zip(q["iv"], DEGREES[:4]):
+    for iv, deg in zip(q["iv"], DEGREES[:4], strict=False):
         # La tónica se queda donde la puso el usuario; el resto usa el molde
         s, ff = (ROOT_STRING, f) if iv == 0 else tone_pos(ROOT_STRING, f, iv)
         up.append({"role": deg, "string": s, "fret": ff,

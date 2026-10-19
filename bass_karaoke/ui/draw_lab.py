@@ -9,10 +9,18 @@ se dibuja sobre el mástil en draw_neck.
 import pygame
 
 from ..config import (
-    TAB_Y, NECK_Y, W,
+    C_ACCENT,
+    C_DGRAY,
+    C_ERR,
+    C_GRAY,
+    C_GREEN,
+    C_OK,
+    C_RED,
+    C_WHITE,
+    NECK_Y,
     STRING_NAMES,
-    C_ACCENT, C_DGRAY, C_GRAY, C_WHITE, C_GREEN, C_RED,
-    C_OK, C_ERR,
+    TAB_Y,
+    W,
 )
 from .staff import draw_mini_staff
 

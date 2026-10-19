@@ -3,12 +3,21 @@ Dibuja la partitura scrolleable (zona SCORE).
 """
 import math
 import time
+
 import pygame
 
 from ..config import (
-    W, TAB_Y, TAB_H, SCORE_H, C_BG, C_ACCENT, C_DGRAY, C_GRAY,
-    C_WHITE, C_OK, C_ERR, C_WAIT,
+    C_ACCENT,
+    C_DGRAY,
+    C_ERR,
+    C_GRAY,
+    C_OK,
+    C_WAIT,
+    SCORE_H,
     STRING_COLORS,
+    TAB_H,
+    TAB_Y,
+    W,
 )
 
 SY = TAB_Y + TAB_H + 8
@@ -18,14 +27,14 @@ def draw_score(app) -> None:
     CURSOR_X = W // 3
     pygame.draw.rect(app.screen, (13, 13, 22), (0, SY, W, SCORE_H))
 
-    if app._score_surf is not None:
-        xs = app._score_note_xs
+    if app.view._score_surf is not None:
+        xs = app.view._score_note_xs
 
         def beat_to_img_x(b16):
             if not xs:
-                total  = getattr(app, '_score_total16', None) or 1
-                margin = app._score_surf.get_width() * 0.04
-                return margin + max(0, b16) / total * (app._score_surf.get_width() - margin)
+                total  = getattr(app.view, '_score_total16', None) or 1
+                margin = app.view._score_surf.get_width() * 0.04
+                return margin + max(0, b16) / total * (app.view._score_surf.get_width() - margin)
             if b16 <= xs[0][0]:
                 if len(xs) > 1 and xs[1][0] > xs[0][0]:
                     slope = (xs[1][1] - xs[0][1]) / (xs[1][0] - xs[0][0])
@@ -42,13 +51,13 @@ def draw_score(app) -> None:
             return xs[-1][1]
 
         target_x = beat_to_img_x(app.beat_time)
-        app._score_scroll_x += (target_x - app._score_scroll_x) * 0.15
-        blit_x = CURSOR_X - int(app._score_scroll_x)
+        app.view._score_scroll_x += (target_x - app.view._score_scroll_x) * 0.15
+        blit_x = CURSOR_X - int(app.view._score_scroll_x)
 
         NAME_H = 14   # altura de la tira de nombres de nota
         clip = pygame.Rect(0, SY, W, SCORE_H)
         app.screen.set_clip(clip)
-        app.screen.blit(app._score_surf, (blit_x, SY + NAME_H + 1))
+        app.screen.blit(app.view._score_surf, (blit_x, SY + NAME_H + 1))
         app.screen.set_clip(None)
 
         # ── tira de nombres de nota ──────────────────────────────────────────
@@ -145,7 +154,7 @@ def _draw_score_manual(app, SY, CURSOR_X):
             lines.append(int(y)); y += LINE_SEP
         return lines
 
-    vx = int(app.viewport_x)
+    vx = int(app.view.viewport_x)
     prev_meas = -1
     for note in app.notes:
         if note["measure_num"] != prev_meas:
