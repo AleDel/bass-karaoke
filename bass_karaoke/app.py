@@ -13,7 +13,7 @@ import time
 import pygame
 
 from . import features
-from .chords import load_song_barlen, load_song_map, save_song_map
+from .chords import is_rest_chord, load_song_barlen, load_song_map, save_song_map
 from .config import (
     BPM_DEFAULT,
     BPM_ORIGINAL,
@@ -2467,7 +2467,7 @@ class BassKaraoke(
                 name = n
             else:
                 break
-        return name
+        return "—" if is_rest_chord(name) else name
 
     def _chord_edit_index_at(self, sec, tol=0.06):
         for i, (s, _n) in enumerate(self.chord_events):
@@ -2476,23 +2476,13 @@ class BassKaraoke(
         return -1
 
     def _chord_edit_apply(self, s16, name):
-        """Fija el acorde del compás; vacío = heredar (borra el evento)."""
+        """Fija el acorde del compás; vacío deja hueco (sin acorde)."""
         sec  = self._chord_edit_sec(s16)
         name = (name or "").strip()
-        idx  = self._chord_edit_index_at(sec)
         if not name:
-            if idx >= 0:
-                del self.chord_events[idx]
-                self.chord_edit_dirty = True
-            return
-        if idx >= 0:
-            if self.chord_events[idx][1] != name:
-                self.chord_events[idx] = [sec, name]
-                self.chord_edit_dirty = True
+            self._chord_bar_rest(sec)
         else:
-            self.chord_events.append([sec, name])
-            self.chord_events.sort(key=lambda e: float(e[0]))
-            self.chord_edit_dirty = True
+            self._chord_bar_store(sec, name)
 
     def _toggle_chord_editor(self):
         self.chord_edit_open = not self.chord_edit_open
@@ -2580,6 +2570,37 @@ class BassKaraoke(
                 break
         return name
 
+    def _chord_bar_store(self, sec, name):
+        """Pone [sec, name] en el compás, sustituyendo el evento que hubiera."""
+        before = self._chord_bar_snapshot()
+        idx    = self._chord_bar_index_at(sec)
+        if idx is None:
+            self.chord_events.append([float(sec), str(name)])
+            self.chord_events.sort(key=lambda e: float(e[0]))
+        else:
+            self.chord_events[idx] = [float(sec), str(name)]
+        if self._chord_bar_snapshot() != before:
+            self.chord_edit_dirty = True
+        return idx is None
+
+    def _chord_bar_rest(self, sec):
+        """Deja el compás sin acorde (hueco) en vez de heredar el anterior.
+
+        Un acorde dura hasta el siguiente cambio, así que para que al
+        borrarlo quede un hueco de verdad hay que guardar un evento vacío en
+        ese compás. Si el hueco ya era propio, lo quita y vuelve a heredar.
+        Devuelve "set" (dejó hueco) o "removed" (lo quitó).
+        """
+        idx = self._chord_bar_index_at(sec)
+        if idx is not None and is_rest_chord(str(self.chord_events[idx][1])):
+            before = self._chord_bar_snapshot()
+            del self.chord_events[idx]
+            if self._chord_bar_snapshot() != before:
+                self.chord_edit_dirty = True
+            return "removed"
+        self._chord_bar_store(sec, "")
+        return "set"
+
     def _chord_bar_clear(self):
         self.chord_bar_sel_measure    = None
         self.chord_bar_typing         = False
@@ -2650,17 +2671,14 @@ class BassKaraoke(
                 self.chord_events = [
                     e for e in self.chord_events
                     if not (sec0 + 0.05 < float(e[0]) < sec1 - 0.05)]
-            if not name or name == prev:
+            if not name:
+                self._chord_bar_rest(sec0)
+            elif name == prev:
                 i = self._chord_bar_index_at(sec0)
                 if i is not None:
                     del self.chord_events[i]
             else:
-                i = self._chord_bar_index_at(sec0)
-                if i is not None:
-                    self.chord_events[i] = [sec0, name]
-                else:
-                    self.chord_events.append([sec0, name])
-                    self.chord_events.sort(key=lambda e: float(e[0]))
+                self._chord_bar_store(sec0, name)
         if self._chord_bar_snapshot() != before:
             self.chord_edit_dirty = True
         self.chord_bar_typing         = False
@@ -2681,21 +2699,23 @@ class BassKaraoke(
         self.chord_bar_replace        = False
 
     def _chord_bar_delete(self):
-        """Quita el cambio de acorde del compás (hereda el anterior)."""
+        """Supr: deja el compás sin acorde (hueco) en vez de heredar.
+
+        Si el compás ya tenía su propio hueco, Supr lo quita y vuelve a
+        heredar el acorde anterior.
+        """
         cell = self._chord_bar_selected_cell()
         if cell is None:
             self.chord_bar_msg = "Selecciona un compás primero"
             return
-        _i, num, _raw, _v0, _v1, sec0, _s1, _name, _ch = cell
-        i = self._chord_bar_index_at(sec0)
-        if i is None:
-            self.chord_bar_msg = f"Compás {num}: ya hereda del anterior"
+        _i, num, _raw, _v0, _v1, sec0, _s1, name, is_change = cell
+        if not is_change and is_rest_chord(name):
+            self.chord_bar_msg = f"Compás {num}: ya está sin acorde"
             return
-        before = self._chord_bar_snapshot()
-        del self.chord_events[i]
-        if self._chord_bar_snapshot() != before:
-            self.chord_edit_dirty = True
-            self.chord_bar_msg = f"Compás {num}: cambio quitado"
+        what = self._chord_bar_rest(sec0)
+        self.chord_bar_msg = (f"Compás {num}: sin acorde (hueco)"
+                              if what == "set"
+                              else f"Compás {num}: vuelve a heredar")
 
     def _chord_bar_click(self, pos):
         """Clic en la tira: selecciona el compás bajo el cursor."""

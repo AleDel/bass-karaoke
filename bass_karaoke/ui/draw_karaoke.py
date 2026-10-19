@@ -19,7 +19,7 @@ import math
 
 import pygame
 
-from ..chords import lyric_at, snap_events_to_grid
+from ..chords import is_rest_chord, lyric_at, snap_events_to_grid
 from ..config import (
     C_ACCENT,
     C_BG2,
@@ -49,7 +49,7 @@ def _bass_root(chord_name: str) -> str:
 
 
 def _is_rest(name: str) -> bool:
-    return (name or "").strip() in ("", "—", "N", "N.C.", "NC")
+    return is_rest_chord(name)
 
 
 def _vis16(app, raw16: float) -> float:
@@ -241,9 +241,9 @@ def draw_karaoke_strip(app) -> None:
             if x1c > x0c:
                 pygame.draw.rect(app.screen, fill, (x0c, yt0, x1c - x0c, th))
 
-            # Línea de compás (fuerte y de acento si hay cambio de acorde)
+            # Línea de compás (acento si hay cambio de acorde; el hueco va liso)
             if 0 <= x0 <= W:
-                if is_change:
+                if is_change and not rest:
                     pygame.draw.line(app.screen, C_ACCENT,
                                      (x0, yt0), (x0, yt0 + th), 2)
                 else:
@@ -252,8 +252,9 @@ def draw_karaoke_strip(app) -> None:
 
             # Número de compás (esquina superior izquierda)
             if x0c + 24 <= x1c:
-                nt = app.font_tiny.render(str(num), True,
-                                          C_ACCENT if is_change else C_DGRAY)
+                nt = app.font_tiny.render(
+                    str(num), True,
+                    C_ACCENT if (is_change and not rest) else C_DGRAY)
                 app.screen.blit(nt, (x0c + 3, yt0 + 1))
 
             # Cambios fuera de compás (eventos a mitad de este compás)
@@ -369,7 +370,7 @@ def draw_karaoke_strip(app) -> None:
                                   "Esc cancelar", True, C_GRAY)
         app.screen.blit(ht, (W - ht.get_width() - 10, yi + 4))
     elif sel is not None:
-        ht = app.font_tiny.render("Enter editar · Supr quitar · Esc salir",
+        ht = app.font_tiny.render("Enter editar · Supr sin acorde · Esc salir",
                                   True, C_GRAY)
         app.screen.blit(ht, (W - ht.get_width() - 10, yi + 4))
     elif getattr(app, "chord_edit_dirty", False):

@@ -33,6 +33,15 @@ def chord_name(root_pc: int, minor: bool) -> str:
     return f"{NAMES_ES[root_pc % 12]}{'m' if minor else ''}"
 
 
+# Marcas de "sin acorde" en el mapa: el compás queda en blanco (hueco).
+REST_NAMES = ("", "—", "N", "N.C.", "NC")
+
+
+def is_rest_chord(name: str) -> bool:
+    """True si el nombre es un hueco (sin acorde)."""
+    return (name or "").strip() in REST_NAMES
+
+
 def estimate_chords(audio_path: str, bpm_hint: float = 0.0,
                     sr: int = 22050):
     """Estima un acorde por beat. Devuelve [(start_sec, nombre)]."""

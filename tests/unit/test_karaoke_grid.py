@@ -81,3 +81,14 @@ def test_cells_fall_back_to_bars_from_the_score_length():
     cells = draw_karaoke.chord_measure_cells(app)
     assert [c[1] for c in cells] == [1, 2, 3, 4]
     assert [c[2] for c in cells] == [0.0, 12.0, 24.0, 36.0]
+
+
+def test_cells_keep_the_gap_after_a_cleared_chord():
+    """Un evento vacío deja el compás sin acorde (no hereda el anterior)."""
+    evs = [(1.935, "Fam"), (5.805, ""), (7.74, "Dom")]
+    cells = draw_karaoke.chord_measure_cells(FakeApp(evs))
+    assert cells[1][7] == "Fam"
+    assert cells[2][7] == "Fam"
+    assert cells[3][7] == ""        # hueco propio: compás 4 sin acorde
+    assert cells[3][8] is True      # y está marcado como cambio
+    assert cells[4][7] == "Dom"
