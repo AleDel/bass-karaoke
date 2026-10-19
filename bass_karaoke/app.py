@@ -113,9 +113,12 @@ FPS = 60
 # Nombre en español de cada figura del metrónomo (MusicXML beat-unit)
 FIGURE_NAMES = {
     "whole": "redonda", "half": "blanca", "quarter": "negra",
-    "eighth": "corchea", "16th": "semicorchea", "32nd": "fusa",
-    "64th": "semifusa",
+    "eighth": "corchea", "16th": "semicorchea",
+    "32nd": "fusa", "64th": "semifusa",
 }
+
+# Escalado suave al redimensionar la ventana (SDL2 usa 1 = lineal).
+os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "1")
 
 # ── Lógica de entrenamiento (pura, portable a C++/Flutter) ─────────────
 # music.py = teoría · walking.py = moldes · training.py = juego de notas ·
@@ -131,6 +134,35 @@ from .modes import (
 )
 
 log = logging.getLogger(__name__)
+
+# Diseño a resolución fija (W×H) y ventana redimensionable: SDL escala el
+# lienzo lógico manteniendo el aspecto (barras negras si hace falta), así que
+# todo el dibujo sigue en coordenadas de diseño y el ratón se traduce solo.
+_WINDOW_FLAGS = pygame.RESIZABLE | pygame.SCALED
+
+# Atajos clicables de la cabecera: (acción, etiqueta, tecla que la activa).
+_HEADER_CHIPS = (
+    ("help", "AYUDA", "F1"),
+    ("songs", "CANCIONES", "L"),
+    ("align", "ALINEAR", "W"),
+    ("features", "AJUSTES", "I"),
+)
+_CHIP_H = 22
+_CHIP_PAD = 16
+_CHIP_GAP = 6
+
+
+def _create_window():
+    """Crea la ventana con vsync; degrada si el backend no lo soporta."""
+    try:
+        return pygame.display.set_mode((W, H), _WINDOW_FLAGS, vsync=1)
+    except (pygame.error, TypeError):
+        pass
+    try:
+        return pygame.display.set_mode((W, H), _WINDOW_FLAGS)
+    except pygame.error:
+        log.warning("[Ventana] SCALED no disponible — se usa 1280x860 fijo")
+        return pygame.display.set_mode((W, H))
 
 
 def _fmt_tempo(tmap, scaled_by=1.0, mode="bpm"):
@@ -162,7 +194,7 @@ class BassKaraoke(
     def __init__(self):
         pygame.init()
         pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-        self.screen = pygame.display.set_mode((W, H))
+        self.screen = _create_window()
         pygame.display.set_caption("Bass Karaoke v3  –  Feet Don't Fail Me Now")
         self.clock = pygame.time.Clock()
         self.view = ViewState()
@@ -2244,18 +2276,50 @@ class BassKaraoke(
         pygame.draw.rect(self.screen, C_PANEL, (0, 0, W, HEADER_H))
         pygame.draw.line(self.screen, C_ACCENT, (0, HEADER_H), (W, HEADER_H), 2)
 
-        title = self.font_title.render(
-            f"Bass Karaoke  –  {self.song_name or 'sin canción'}",
-            True, C_WHITE)
-        self.screen.blit(title, (12, 8))
-
         ratio = self._speed_ratio()
         scaled = ratio if abs(ratio - 1.0) > 1e-6 else 1.0
         mode_str = "BPM" if self.view.tempo_display_mode == "bpm" else "figuras"
         bpm_t = self.font_med.render(
             _fmt_tempo(self.tempo_map, scaled, self.view.tempo_display_mode),
             True, C_ACCENT)
-        self.screen.blit(bpm_t, (W - bpm_t.get_width() - 12, 8))
+        bpm_x = W - bpm_t.get_width() - 12
+
+        sc = None
+        sc_x = bpm_x
+        if self.score_total > 0:
+            pct = int(100 * self.score_ok / self.score_total)
+            col = C_GREEN if pct > 70 else C_RED if pct < 40 else C_ACCENT
+            sc  = self.font_med.render(f"{pct}% ok", True, col)
+            sc_x = bpm_x - sc.get_width() - 18
+
+        chips, chips_left = self._header_chips_layout()
+        for action, text, rect in chips:
+            hot = action == self.view.chip_hover
+            bg = C_ACCENT if hot else C_DGRAY
+            fg = C_BG    if hot else C_WHITE
+            pygame.draw.rect(self.screen, bg, rect, border_radius=5)
+            ct = self.font_tiny.render(text, True, fg)
+            self.screen.blit(ct, (rect.centerx - ct.get_width() // 2,
+                                  rect.centery - ct.get_height() // 2))
+
+        title_text = f"Bass Karaoke  –  {self.song_name or 'sin canción'}"
+        title = self.font_title.render(title_text, True, C_WHITE)
+        budget = chips_left - 24
+        while title.get_width() > budget and len(title_text) > 14:
+            title_text = title_text[:-2] + "…"
+            title = self.font_title.render(title_text, True, C_WHITE)
+        self.screen.blit(title, (12, 8))
+        self.screen.blit(bpm_t, (bpm_x, 8))
+        if sc:
+            self.screen.blit(sc, (sc_x, 8))
+
+        state = (">> TOCANDO" if self.playing else
+                 "|| PAUSA"   if self.score_total > 0 else "[] STOP")
+        st = self.font_tiny.render(state, True,
+                                   C_GREEN if self.playing else C_GRAY)
+        st_x = W - st.get_width() - 12
+        self.screen.blit(st, (st_x, 36))
+
         if scaled != 1.0:
             sub_str = (f"original: {_fmt_tempo(self.tempo_map, 1.0, self.view.tempo_display_mode)}"
                        f"   x{ratio:.2f}")
@@ -2263,13 +2327,7 @@ class BassKaraoke(
             sub_str = f"original del tema   x{ratio:.2f}"
         sub_t = self.font_tiny.render(
             f"{sub_str}   [{mode_str}  B=alternar]", True, C_GRAY)
-        self.screen.blit(sub_t, (W - sub_t.get_width() - 12, 30))
-
-        if self.score_total > 0:
-            pct = int(100 * self.score_ok / self.score_total)
-            col = C_GREEN if pct > 70 else C_RED if pct < 40 else C_ACCENT
-            sc  = self.font_med.render(f"{pct}% ok", True, col)
-            self.screen.blit(sc, (W - 320, 8))
+        self.screen.blit(sub_t, (max(12, st_x - sub_t.get_width() - 14), 30))
 
         off_col    = C_GRAY if self.mp3_offset_sec == 0 else C_BLUE
         speed_str  = ""
@@ -2287,11 +2345,52 @@ class BassKaraoke(
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
-        state = (">> TOCANDO" if self.playing else
-                 "|| PAUSA"   if self.score_total > 0 else "[] STOP")
-        st = self.font_tiny.render(state, True,
-                                   C_GREEN if self.playing else C_GRAY)
-        self.screen.blit(st, (W - 155, 36))
+    def _header_chips_layout(self):
+        """Chips alineados a la derecha, justo antes del tempo y del score."""
+        ratio = self._speed_ratio()
+        scaled = ratio if abs(ratio - 1.0) > 1e-6 else 1.0
+        bpm_w = self.font_med.size(
+            _fmt_tempo(self.tempo_map, scaled,
+                       self.view.tempo_display_mode))[0]
+        right = W - bpm_w - 12 - 18
+        if self.score_total > 0:
+            pct = int(100 * self.score_ok / self.score_total)
+            right -= self.font_med.size(f"{pct}% ok")[0] + 18
+        items = []
+        x = right
+        for action, label, key in reversed(_HEADER_CHIPS):
+            text = f"{label} {key}"
+            w = self.font_tiny.size(text)[0] + _CHIP_PAD
+            x -= w
+            items.append((action, text, pygame.Rect(x, 5, w, _CHIP_H)))
+            x -= _CHIP_GAP
+        items.reverse()
+        return items, x
+
+    def _header_chip_click(self, pos):
+        if not 0 <= pos[1] <= HEADER_H:
+            return False
+        for action, _text, rect in self._header_chips_layout()[0]:
+            if rect.collidepoint(pos):
+                self._header_chip_action(action)
+                return True
+        return False
+
+    def _header_chip_action(self, action):
+        if action == "help":
+            self.view.help_open = not self.view.help_open
+        elif action == "songs":
+            self.view.song_menu_open = not self.view.song_menu_open
+            self.view.song_menu_sel = self.song_idx
+        elif action == "align":
+            if self.align_editor_open:
+                self._close_align_editor(True)
+            else:
+                self._open_align_editor()
+        elif action == "features":
+            self.view.feature_menu_open = not self.view.feature_menu_open
+            self.feature_msg.clear()
+            self.feature_log.clear()
 
     # ══════════════════════════════════════════════════════════════════
     #  EDITOR DE ACORDES (Y) — corregir acordes por compás y guardar
@@ -2906,6 +3005,8 @@ class BassKaraoke(
                 return True
             if self.chord_bar_typing:
                 return True
+            if event.button == 1 and self._header_chip_click(event.pos):
+                return True
             in_strip = KARAOKE_Y <= event.pos[1] <= KARAOKE_Y + KARAOKE_H
             if in_strip and self.view.chords_on and (
                     self.chord_events or self.lyric_events):
@@ -3053,6 +3154,12 @@ class BassKaraoke(
                 return True
             if self.chord_bar_typing:
                 return True
+            self.view.chip_hover = ""
+            if 0 <= event.pos[1] <= HEADER_H:
+                for action, _text, rect in self._header_chips_layout()[0]:
+                    if rect.collidepoint(event.pos):
+                        self.view.chip_hover = action
+                        break
             if self.align_editor_open:
                 if self.align_drag_marker is not None:
                     self._align_drag_marker_to(event.pos)

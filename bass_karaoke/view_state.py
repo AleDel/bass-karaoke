@@ -50,6 +50,9 @@ class ViewState:
     _drag_start_beat: float = 0.0
     _drag_start_mx: int = 0
 
+    # ── Chips clicables de la cabecera ──────────────────────────────────
+    chip_hover: str = ""
+
     # ── Realimentación visual (preview de nota/cuerda) ──────────────────
     preview_hz: float = 0.0
     preview_name: str = "—"
