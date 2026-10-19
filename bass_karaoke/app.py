@@ -1669,12 +1669,28 @@ class BassKaraoke(
                 seen[m] = note["start16"]
         return sorted(seen.values())
 
+    def measure_starts_visual(self):
+        """Inicios de compás en la rejilla DIBUJADA (desplazada por la fase).
+
+        La tira, el waveform, la tab y la partitura pintan los compases en
+        `start16 + grid_phase16()` (la fase alinea la rejilla con la entrada
+        del bajo), así que el snap tiene que apuntar ahí: si apunta a la
+        rejilla "cruda" el cursor queda una fracción de compás a la izquierda
+        de la línea que se ve (p. ej. 1/16 en Ayer Hable Con Dios).
+        """
+        phase = int(self.grid_phase16())
+        out = []
+        for s in self._measure_starts():
+            s = float(s)
+            out.append(s + phase if s > 1e-9 else s)
+        return out
+
     def _snap_measure(self, direction: int):
         """
         Salta al inicio del compás anterior (direction=-1) o siguiente (+1).
         Si ya estamos al inicio del compás actual, retrocede al compás anterior.
         """
-        starts = self._measure_starts()
+        starts = self.measure_starts_visual()
         if not starts:
             return
         cur = self.beat_time
