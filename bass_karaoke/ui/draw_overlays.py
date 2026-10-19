@@ -159,13 +159,17 @@ def draw_device_menu(app) -> None:
                 pygame.draw.rect(app.screen, C_DGRAY,
                                  (mx + 6, ry - 2, mw - 12, row_h - 2),
                                  border_radius=4)
-            col = C_GREEN if is_cur else C_WHITE if is_sel else C_GRAY
+            col    = C_GREEN if is_cur else C_WHITE if is_sel else C_GRAY
+            prefix = f"{'●' if is_cur else ' '} [{i}] "
+            tag    = (app.font_tiny.render("¿salida?", True, C_WAIT)
+                      if device_name_warning(name) else None)
+            tag_w  = tag.get_width() + 10 if tag else 0
+            name_w = mw - 24 - tag_w - app.font_small.size(prefix)[0]
             lbl = app.font_small.render(
-                f"{'●' if is_cur else ' '} [{i}] {name[:48]}", True, col)
+                prefix + _fit_text(app.font_small, name, name_w), True, col)
             app.screen.blit(lbl, (mx + 12, ry))
-            if device_name_warning(name):
-                tag = app.font_tiny.render(" ¿salida?", True, C_WAIT)
-                app.screen.blit(tag, (mx + 14 + lbl.get_width(), ry + 4))
+            if tag:
+                app.screen.blit(tag, (mx + mw - 16 - tag.get_width(), ry + 4))
 
     hint = app.font_tiny.render(
         "Up/Dn navegar    ENTER confirmar    ESC / D  cerrar",

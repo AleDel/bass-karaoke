@@ -58,6 +58,23 @@ log = logging.getLogger(__name__)
 PITCH_AVAILABLE = AUBIO_OK and PA_OK
 
 
+def clean_device_name(name):
+    """Repara nombres con UTF-8 decodificado como latin-1 (PyAudio en Windows).
+
+    PyAudio devuelve algunos nombres de dispositivo como texto ya mal
+    decodificado ('MicrÃ³fono' en vez de 'Micrófono'); re-encodear a latin-1 y
+    decodear como UTF-8 lo corrige. Si el nombre no es mojibake, se deja igual.
+    """
+    if isinstance(name, bytes):
+        return name.decode("utf-8", "replace")
+    if not isinstance(name, str):
+        return str(name)
+    try:
+        return name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
+
+
 def enumerate_devices():
     """Devuelve lista de (device_idx, name) de dispositivos de entrada disponibles."""
     if not PA_OK:
@@ -67,7 +84,7 @@ def enumerate_devices():
     for i in range(p.get_device_count()):
         info = p.get_device_info_by_index(i)
         if info.get("maxInputChannels", 0) > 0:
-            devices.append((i, info["name"]))
+            devices.append((i, clean_device_name(info["name"])))
     p.terminate()
     return devices
 
