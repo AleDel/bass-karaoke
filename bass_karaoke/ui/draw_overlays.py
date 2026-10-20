@@ -431,8 +431,9 @@ def draw_help(app) -> None:
             ("C", "Countdown on/off"),
             ("J", "Acordes + letra (karaoke)"),
             ("Y", "Editor de acordes (por compás)"),
+            ("F9", "Deducir acordes de la partitura (también D en el editor Y)"),
             ("Clic barra", "Seleccionar compás (tira J)"),
-            ("Enter / Supr", "Editar / quitar el acorde del compás"),
+            ("Enter / Supr", "Editar / dejar sin acorde el compás"),
             ("Clic mástil/piano", "Oír y ver la nota (aprender notas)"),
         ]),
         ("Entrenamiento", [

@@ -111,3 +111,57 @@ def test_load_song_barlen_accepts_valid_and_falls_back(tmp_path):
     assert chords.load_song_barlen(str(path), default=4) == 4
 
     assert chords.load_song_barlen(str(tmp_path / "missing.json"), default=6) == 6
+
+
+def _note(start16, dur, step, octave=1, alter=0, hz=None):
+    n = {"start16": start16, "dur": dur, "step": step, "octave": octave,
+         "alter": alter}
+    if hz is not None:
+        n["hz"] = hz
+    return n
+
+
+def test_note_pitch_class_uses_step_and_alter():
+    assert chords.note_pitch_class(_note(0, 4, "F")) == 5
+    assert chords.note_pitch_class(_note(0, 4, "B", alter=-1)) == 10   # Sib
+    assert chords.note_pitch_class(_note(0, 4, "A", alter=-1)) == 8    # Lab
+
+
+def test_note_pitch_class_falls_back_to_hz():
+    assert chords.note_pitch_class({"hz": 87.31}) == 5      # F2
+    assert chords.note_pitch_class({"hz": 0}) is None
+    assert chords.note_pitch_class({}) is None
+
+
+def test_chords_from_notes_derives_roots_and_minor_quality():
+    # 3/4: compás 1 = Fa (con Lab, 3ª menor), compás 2 = Do, compás 3 = Fa.
+    notes = [
+        _note(0,  6, "F"), _note(0, 6, "A", alter=-1),
+        _note(6,  6, "F"),
+        _note(12, 6, "C", octave=2), _note(12, 6, "E", alter=-1),
+        _note(18, 6, "C", octave=2),
+        _note(24, 12, "F"),
+    ]
+    out = chords.chords_from_notes(notes, barlen=3)
+    assert out == [(0, "Fam"), (12, "Dom"), (24, "Fam")]
+
+
+def test_chords_from_notes_detects_major_when_the_third_is_major():
+    notes = [_note(0, 8, "C"), _note(8, 8, "E")]
+    assert chords.chords_from_notes(notes, barlen=3) == [(0, "Do")]
+
+
+def test_chords_from_notes_merges_repeated_chords():
+    notes = [_note(0, 12, "F"), _note(12, 12, "F"), _note(24, 12, "F")]
+    assert chords.chords_from_notes(notes, barlen=3) == [(0, "Fam")]
+
+
+def test_chords_from_notes_groups_several_bars():
+    notes = [_note(0, 12, "F"), _note(12, 4, "C")]
+    assert chords.chords_from_notes(notes, barlen=3, bars_per_chord=2) == [
+        (0, "Fam")]
+
+
+def test_chords_from_notes_without_notes_returns_empty():
+    assert chords.chords_from_notes([]) == []
+    assert chords.chords_from_notes([{"start16": 0, "dur": 4}]) == []

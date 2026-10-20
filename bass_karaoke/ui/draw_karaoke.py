@@ -370,8 +370,9 @@ def draw_karaoke_strip(app) -> None:
                                   "Esc cancelar", True, C_GRAY)
         app.screen.blit(ht, (W - ht.get_width() - 10, yi + 4))
     elif sel is not None:
-        ht = app.font_tiny.render("Enter editar · Supr sin acorde · Esc salir",
-                                  True, C_GRAY)
+        ht = app.font_tiny.render(
+            "Enter editar · Supr sin acorde · F9 deducir · Esc salir",
+            True, C_GRAY)
         app.screen.blit(ht, (W - ht.get_width() - 10, yi + 4))
     elif getattr(app, "chord_edit_dirty", False):
         ht = app.font_tiny.render("● acordes sin guardar · Ctrl+S",

@@ -2508,6 +2508,33 @@ class BassKaraoke(
         self.chord_edit_sel = max(0, min(sel, len(rows) - 1))
         self.chord_edit_top = max(0, self.chord_edit_sel - 8)
 
+    def _chords_from_score(self):
+        """Deduce los acordes de las notas de la partitura y los reemplaza.
+
+        Útil cuando el .chords.json falta o está mal: usa las notas del
+        MusicXML (no el audio) con la misma lógica que la transcripción.
+        Los acordes quedan sin guardar hasta Ctrl+S.
+        """
+        from .chords import chords_from_notes
+
+        if not self.notes:
+            msg = "Sin partitura: no hay notas para deducir acordes"
+            self.chord_edit_msg = self.chord_bar_msg = msg
+            return 0
+        barlen = int(self.beats_per_bar or self.chord_barlen or 4)
+        segs = chords_from_notes(self.notes, barlen=barlen, bars_per_chord=1)
+        if not segs:
+            msg = "No se pudo deducir ningún acorde de la partitura"
+            self.chord_edit_msg = self.chord_bar_msg = msg
+            return 0
+        self.chord_events = [[float(self._song_seconds(s16)), name]
+                             for s16, name in segs]
+        self.chord_edit_dirty = True
+        msg = (f"Partitura: {len(segs)} acordes · Ctrl+S para guardar")
+        self.chord_edit_msg = self.chord_bar_msg = msg
+        log.info(f"[Acordes] {msg}")
+        return len(segs)
+
     def _save_chords(self):
         """Escribe <base>.chords.json (con .bak). Devuelve (ok, mensaje)."""
         path = self.chords_path
@@ -2751,8 +2778,8 @@ class BassKaraoke(
         title = self.font_med.render("EDITOR DE ACORDES", True, C_ACCENT)
         self.screen.blit(title, (mx + mw // 2 - title.get_width() // 2,
                                  my + 12))
-        sub = ("↑/↓ compás  ·  Enter/T editar  ·  Supr borrar  ·  "
-               "Ctrl+S guardar  ·  Esc cerrar")
+        sub = ("↑/↓ compás  ·  Enter/T editar  ·  Supr sin acorde  ·  "
+               "D deducir de la partitura  ·  Ctrl+S guardar  ·  Esc cerrar")
         st = self.font_tiny.render(sub, True, C_GRAY)
         self.screen.blit(st, (mx + 16, my + 42))
         if self.chord_edit_dirty:
@@ -2875,6 +2902,8 @@ class BassKaraoke(
                 elif event.key == pygame.K_DELETE:
                     if rows:
                         self._chord_edit_apply(rows[self.chord_edit_sel][1], "")
+                elif event.key == pygame.K_d:
+                    self._chords_from_score()
                 elif event.key == pygame.K_s and (mods_c & pygame.KMOD_CTRL):
                     self._chord_edit_save()
                 return True
@@ -3092,6 +3121,8 @@ class BassKaraoke(
             elif event.key == pygame.K_F8:
                 self.gen_barlen = 4 if self.gen_barlen == 3 else 3
                 log.info(f"[Gen] Compás para generar: {self.gen_barlen}/4")
+            elif event.key == pygame.K_F9:
+                self._chords_from_score()
             elif event.key == pygame.K_k:
                 self._cor_open()
             elif event.key == pygame.K_o:

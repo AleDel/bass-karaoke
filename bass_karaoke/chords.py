@@ -9,6 +9,7 @@ Acordes y letra sincronizada para el modo karaoke — lógica pura.
   carga sin coste en tiempo real (J para mostrar/ocultar).
 """
 import json
+import math
 import os
 
 import numpy as np
@@ -40,6 +41,59 @@ REST_NAMES = ("", "—", "N", "N.C.", "NC")
 def is_rest_chord(name: str) -> bool:
     """True si el nombre es un hueco (sin acorde)."""
     return (name or "").strip() in REST_NAMES
+
+
+_STEP_PC = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def note_pitch_class(note) -> int | None:
+    """Clase de tono (0–11) de una nota de la partitura.
+
+    Usa `step`+`alter` del MusicXML (fiable con bemoles/sostenidos) y, si no
+    vienen, la frecuencia `hz`.
+    """
+    step = str((note or {}).get("step") or "").strip().upper()[:1]
+    if step in _STEP_PC:
+        try:
+            alter = int(float((note or {}).get("alter") or 0))
+        except (TypeError, ValueError):
+            alter = 0
+        return (_STEP_PC[step] + alter) % 12
+    try:
+        hz = float((note or {}).get("hz") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if hz <= 0:
+        return None
+    midi = int(round(69 + 12 * math.log2(hz / 440.0)))
+    return midi % 12
+
+
+def chords_from_notes(notes, barlen: int = 4, bars_per_chord: int = 1):
+    """Deduce los acordes de las notas de la partitura (no del audio).
+
+    Reutiliza la lógica de la transcripción (`build.derive_chord_segments`):
+    en cada grupo de `bars_per_chord` compases toma la clase de tono con más
+    duración como raíz y decide mayor/menor por la 3ª (menor si no aparece,
+    lo habitual en líneas de bajo). Fusiona tramos consecutivos iguales.
+    Devuelve [(start16, "Fam")].
+    """
+    from .build import derive_chord_segments
+
+    q = []
+    for n in notes or ():
+        pc = note_pitch_class(n)
+        if pc is None:
+            continue
+        try:
+            s16 = int(round(float(n.get("start16") or 0)))
+            dur = int(round(float(n.get("dur") or 1)))
+        except (TypeError, ValueError):
+            continue
+        q.append((s16, max(1, dur), pc))
+    segs = derive_chord_segments(q, max(1, int(barlen)),
+                                 max(1, int(bars_per_chord)))
+    return [(int(s16), chord_name(root, minor)) for s16, root, minor in segs]
 
 
 def estimate_chords(audio_path: str, bpm_hint: float = 0.0,
