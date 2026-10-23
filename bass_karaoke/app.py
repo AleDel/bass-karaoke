@@ -48,6 +48,7 @@ from .config import (
     PIANO_X,
     PIANO_Y,
     PITCH_METHODS,
+    SAMPLERATE,
     SONGS_DIR,
     STRING_NAMES,
     TAB_Y,
@@ -69,9 +70,17 @@ from .audio import (
     VARSPEED_OK,
     PitchEngine,
     VarispeedPlayer,
+    band_available,
+    band_midi_available,
+    render_band_midi,
+    bass_backend,
     enumerate_devices,
     load_mp3_samples,
+    render_band,
+    render_bass,
+    to_int16,
 )
+from .audio.bass_track import hz_to_midi as _bass_hz_to_midi
 from .score import (
     CAIROSVG_OK,
     MUSIC21_OK,
@@ -93,6 +102,7 @@ from .ui import (
     draw_karaoke_strip,
     draw_lab_panel,
     draw_metronome,
+    draw_mixer,
     draw_neck,
     draw_note_panel,
     draw_piano,
@@ -289,6 +299,38 @@ class BassKaraoke(
         self.metro_sound   = False  # desactivado por defecto; N para activar
         self.beats_per_bar = 4       # tiempos por compás (del MusicXML; 3 en 3/4)
         self._click_hi, self._click_lo = self._build_clicks()
+        # Canal 0 reservado para el bajo y canal 1 para la banda del mixer:
+        # los clicks y los previews usan Sound.play() y pygame no toca los
+        # canales reservados.
+        try:
+            pygame.mixer.set_reserved(2)
+        except Exception:
+            pass
+
+        # ── Mixer (F2): canción / bajo / banda / metrónomo ─────────
+        self.mix_song     = 1.0    # volumen de la canción (MP3)
+        self.mix_bass     = 0.6    # volumen de la línea de bajo
+        self.mix_band     = 0.6    # volumen de la banda (batería/piano/guitarra)
+        self.mix_click    = 1.0    # volumen del metrónomo
+        self.muted_bass   = False  # self.muted = mute de la pista Canción
+        self.muted_band   = False
+        self.muted_click  = False
+        self._bass_audio  = None   # np.float32 (frames,2) pre-renderizado
+        self._bass_key    = None   # clave de caché (canción + anclas + tempo)
+        self._bass_sound  = None   # pygame.Sound actual
+        self._bass_pending = None  # Sound preparado, aún sin arrancar
+        self._bass_ch     = None   # pygame.Channel de la pista de bajo
+        self._bass_render_s = 0.0  # tiempo del último render (diagnóstico)
+        self._band_audio  = None   # audio de la banda pre-renderizado
+        self._band_key    = None
+        self._band_sound  = None
+        self._band_pending = None
+        self._band_ch     = None
+        self._band_render_s = 0.0
+        self._band_lock   = threading.Lock()
+        self._resync_target = None   # ratio pendiente de re-render (sin VSP)
+        self._resync_busy = False
+        self._resync_ready = None
 
         # ── Mástil: mapa de notas de la canción ───────────────────────
 
@@ -396,10 +438,12 @@ class BassKaraoke(
         # ── Audio MP3 ──────────────────────────────────────────────────
         self._vsp       = VarispeedPlayer() if VARSPEED_OK else None
         self.mp3_path   = None
+        self.mid_path   = ""
         self._pgm_loaded = False
         self._use_vsp   = False
 
         self._load_config()
+        self._apply_mix()
 
         if self.songs:
             self.song_idx = min(self.song_idx, len(self.songs) - 1)
@@ -490,6 +534,13 @@ class BassKaraoke(
             "tempo_maps":        self._tempo_maps,
             "device_idx":        self.device_idx,
             "muted":             self.muted,
+            "mix_song":          round(self.mix_song, 3),
+            "mix_bass":          round(self.mix_bass, 3),
+            "mix_band":          round(self.mix_band, 3),
+            "mix_click":         round(self.mix_click, 3),
+            "muted_bass":        self.muted_bass,
+            "muted_band":        self.muted_band,
+            "muted_click":       self.muted_click,
             "pitch_method":      self.pitch_method,
             "countdown_enabled": self.countdown_enabled,
             "score_renderer":    self.score_renderer,
@@ -519,6 +570,15 @@ class BassKaraoke(
             self.bpm            = float(cfg.get("bpm",            self.bpm))
             self.mp3_offset_sec = float(cfg.get("mp3_offset_sec", self.mp3_offset_sec))
             self.muted          = bool( cfg.get("muted",          self.muted))
+            self.mix_song       = float(cfg.get("mix_song",       self.mix_song))
+            self.mix_bass       = float(cfg.get("mix_bass",       self.mix_bass))
+            self.mix_band       = float(cfg.get("mix_band",       self.mix_band))
+            self.mix_click      = float(cfg.get("mix_click",      self.mix_click))
+            self.muted_bass     = bool( cfg.get("muted_bass",     self.muted_bass))
+            self.muted_band     = bool( cfg.get("muted_band",     self.muted_band))
+            self.muted_click    = bool( cfg.get("muted_click",    self.muted_click))
+            for _v in ("mix_song", "mix_bass", "mix_band", "mix_click"):
+                setattr(self, _v, max(0.0, min(1.0, getattr(self, _v))))
             saved_dev           = int(  cfg.get("device_idx",     self.device_idx))
             if 0 <= saved_dev < len(self.audio_devices):
                 self.device_idx = saved_dev
@@ -575,12 +635,15 @@ class BassKaraoke(
                 "musicxml":   musicxml,
                 "tg":         self._find_file(folder, ".tg"),
                 "mp3":        self._find_file(folder, ".mp3"),
+                "mid":        (self._find_file(folder, ".mid")
+                               or self._find_file(folder, ".midi")),
                 "audio":      audio,
                 "audio_only": musicxml is None,
             })
             log.info(f"[Canción] {name:24s}  "
                   f"xml={'SÍ' if musicxml else 'NO (F7)'}  "
-                  f"audio={'SÍ' if audio else 'no'}")
+                  f"audio={'SÍ' if audio else 'no'}  "
+                  f"mid={'SÍ' if songs[-1]['mid'] else 'no'}")
         return songs
 
     @staticmethod
@@ -605,6 +668,7 @@ class BassKaraoke(
         self.song_name     = song["name"]
         self.musicxml_path = song["musicxml"] or ""
         self.tg_path       = song["tg"] or TG_PATH
+        self.mid_path      = song.get("mid") or ""
         self.gen_notice    = bool(song.get("audio_only"))
         if self.musicxml_path:
             self._load_notes()
@@ -639,6 +703,7 @@ class BassKaraoke(
                           f"{len(self.lyric_events)} líneas")
             except Exception as e:
                 log.warning(f"[Karaoke WARN] {e}")
+        self._prefetch_band()
         self.chord_edit_dirty     = False
         self.chord_bar_sel_measure    = None
         self.chord_bar_typing     = False
@@ -729,6 +794,17 @@ class BassKaraoke(
         self._vsp        = VarispeedPlayer() if VARSPEED_OK else None
         self._pgm_loaded = False
         self._use_vsp    = False
+        self._bass_audio = None
+        self._bass_key   = None
+        self._band_audio = None
+        self._band_key   = None
+        if self._vsp:
+            # El varispeed mezcla las pistas extra en su mismo stream, ya
+            # estiradas al tempo actual (misma cuenta de frames que el MP3).
+            self._vsp.set_extra_render(self._bass_audio_for)
+            self._vsp.set_extra_volume(self._bass_volume())
+            self._vsp.set_extra2_render(self._band_audio_for)
+            self._vsp.set_extra2_volume(self._band_volume())
         if not self.mp3_path:
             log.info("[Audio] Sin MP3 para esta canción — solo metrónomo/tablatura")
             return
@@ -1762,9 +1838,9 @@ class BassKaraoke(
             self.metro_beat  = int(round(q)) % self.beats_per_bar
             self.metro_flash = 1.0
             self._play_click(self.metro_beat == 0)
-        if not self.muted:
-            offset = self._mp3_sec_of_s16(self.beat_time)
-            self._play_mp3(offset)
+        # La canción muteada sigue sonando a volumen 0: así el playhead y la
+        # pista de bajo no se desincronizan al silenciar/escuchar.
+        self._play_mp3(self._mp3_sec_of_s16(self.beat_time))
 
     def _want_vsp(self):
         # Usar time-stretch (varispeed/sounddevice) solo cuando hay un cambio
@@ -1773,32 +1849,339 @@ class BassKaraoke(
         return bool(self._vsp and self._vsp.loaded
                     and abs(self._speed_ratio() - 1.0) >= 0.005)
 
+    # ══════════════════════════════════════════════════════════════════
+    #  MIXER (F2) — canción / bajo / metrónomo
+    # ══════════════════════════════════════════════════════════════════
+    MIX_TRACKS = (
+        ("song",  "Canción",   "pista del MP3"),
+        ("bass",  "Bajo",      "línea de referencia"),
+        ("band",  "Banda",     "batería + piano + guitarra"),
+        ("click", "Metrónomo", "clicks"),
+    )
+
+    def _mix_get(self, tid):
+        """(volumen, mute) de una pista del mixer."""
+        if tid == "bass":
+            return self.mix_bass, self.muted_bass
+        if tid == "band":
+            return self.mix_band, self.muted_band
+        if tid == "click":
+            return self.mix_click, self.muted_click
+        return self.mix_song, self.muted
+
+    def _mix_set(self, tid, vol=None, mute=None):
+        vol  = None if vol is None else max(0.0, min(1.0, float(vol)))
+        if tid == "bass":
+            if vol is not None:
+                self.mix_bass = vol
+            if mute is not None:
+                self.muted_bass = bool(mute)
+        elif tid == "band":
+            if vol is not None:
+                self.mix_band = vol
+            if mute is not None:
+                self.muted_band = bool(mute)
+        elif tid == "click":
+            if vol is not None:
+                self.mix_click = vol
+            if mute is not None:
+                self.muted_click = bool(mute)
+        else:
+            if vol is not None:
+                self.mix_song = vol
+            if mute is not None:
+                self.muted = bool(mute)
+        self._apply_mix()
+
+    def _bass_volume(self):
+        return 0.0 if self.muted_bass else self.mix_bass
+
+    def _band_volume(self):
+        return 0.0 if self.muted_band else self.mix_band
+
+    def _apply_mix(self):
+        """Lleva los niveles del mixer al mixer de pygame (idempotente)."""
+        try:
+            pygame.mixer.music.set_volume(
+                0.0 if self.muted else self.mix_song)
+        except Exception:
+            pass
+        try:
+            if self._bass_ch is not None:
+                self._bass_ch.set_volume(self._bass_volume())
+            if self._band_ch is not None:
+                self._band_ch.set_volume(self._band_volume())
+        except Exception:
+            pass
+        if self._vsp is not None:
+            try:
+                self._vsp.set_volume(0.0 if self.muted else self.mix_song)
+                self._vsp.set_extra_volume(self._bass_volume())
+                self._vsp.set_extra2_volume(self._band_volume())
+            except Exception:
+                pass
+        click = 0.0 if self.muted_click else self.mix_click
+        for snd in (getattr(self, "_click_hi", None),
+                    getattr(self, "_click_lo", None)):
+            try:
+                if snd is not None:
+                    snd.set_volume(click)
+            except Exception:
+                pass
+
+    def _bass_audio_for(self, ratio=1.0):
+        """Audio pre-renderizado de la línea de bajo (cacheado por canción,
+        anclas y tempo). ``ratio`` < 1 alarga las notas para el varispeed."""
+        notes = self.notes
+        if not notes:
+            return None
+        try:
+            key = (self.song_name, len(notes), round(float(ratio), 4),
+                   round(self.mp3_offset_sec, 4),
+                   round(getattr(self, "song_start_sec", 0.0), 4),
+                   tuple((int(e[0]), round(float(e[1]), 3))
+                         for e in (self.tempo_map or [])))
+        except Exception:
+            key = (self.song_name, len(notes), round(float(ratio), 4))
+        if self._bass_audio is not None and self._bass_key == key:
+            return self._bass_audio
+        events = []
+        inv = 1.0 if abs(ratio - 1.0) < 1e-6 else 1.0 / max(0.1, float(ratio))
+        for n in notes:
+            hz = float(n.get("hz") or 0.0)
+            if hz <= 0.0:
+                continue
+            s16 = n["start16"]
+            t0  = self._mp3_sec_of_s16(s16) * inv
+            dur = (self._song_seconds(s16 + n["dur"])
+                   - self._song_seconds(s16)) * inv
+            events.append((t0, max(0.03, dur), _bass_hz_to_midi(hz)))
+        if not events:
+            self._bass_audio, self._bass_key = None, key
+            return None
+        total = max(t + d for t, d, _ in events)
+        t_start = time.perf_counter()
+        audio = render_bass(events, total)
+        self._bass_render_s = time.perf_counter() - t_start
+        self._bass_audio, self._bass_key = audio, key
+        log.info(f"[Mixer] bajo pre-renderizado: {len(audio) / SAMPLERATE:.1f}s "
+                 f"en {self._bass_render_s * 1000:.0f} ms  ({bass_backend()})")
+        return audio
+
+    def _prefetch_band(self):
+        """Pre-renderiza la banda en segundo plano al cargar la canción."""
+        if not (self.chord_events or self.mid_path):
+            return
+        if self.mid_path:
+            if not band_midi_available():
+                return
+        elif not band_available():
+            return
+
+        def work():
+            try:
+                self._band_audio_for(self._speed_ratio())
+            except Exception as e:
+                log.warning(f"[Band] prefetch: {e}")
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _band_audio_for(self, ratio=1.0):
+        """Banda (batería/piano/guitarra) pre-renderizada desde el cifrado.
+
+        Sigue el mismo criterio temporal que el bajo: tiempos del MP3
+        (``_mp3_sec_of_s16``) y estirado ``1/ratio`` para el varispeed.
+        """
+        if self.mid_path:
+            if not band_midi_available() and not band_available():
+                return None
+        elif not self.chord_events or not band_available():
+            return None
+        if not (self.chord_events or self.mid_path):
+            return None
+        try:
+            key = (self.song_name,
+                   self.mid_path,
+                   round(os.path.getmtime(self.mid_path), 3)
+                   if self.mid_path and os.path.isfile(self.mid_path) else 0,
+                   tuple((round(float(s), 3), str(n)) for s, n in self.chord_events),
+                   round(float(ratio), 4),
+                   round(self.mp3_offset_sec, 4),
+                   round(getattr(self, "song_start_sec", 0.0), 4),
+                   tuple((int(e[0]), round(float(e[1]), 3))
+                         for e in (self.tempo_map or [])))
+        except Exception:
+            key = (self.song_name, len(self.chord_events),
+                   round(float(ratio), 4))
+        if self._band_audio is not None and self._band_key == key:
+            return self._band_audio
+        with self._band_lock:
+            if self._band_audio is not None and self._band_key == key:
+                return self._band_audio
+            return self._render_band_locked(key, ratio)
+
+    def _render_band_locked(self, key, ratio):
+        t_start = time.perf_counter()
+        try:
+            audio = None
+            if self.mid_path and band_midi_available():
+                audio = render_band_midi(self.mid_path, ratio)
+                self._band_render_s = time.perf_counter() - t_start
+                if audio is not None:
+                    self._band_audio, self._band_key = audio, key
+                    log.info(f"[Band] MIDI externo {os.path.basename(self.mid_path)}"
+                             f": {len(audio) / SAMPLERATE:.1f}s en "
+                             f"{self._band_render_s * 1000:.0f} ms")
+                    return audio
+                log.warning("[Band] el .mid no se pudo renderizar; "
+                            "uso la banda generada")
+            if not self.chord_events or not band_available():
+                self._band_audio, self._band_key = None, key
+                return None
+            chords = []
+            for sec, name in self.chord_events:
+                s16 = self._song_seconds_inverse(float(sec))
+                chords.append((self._mp3_sec_of_s16(s16), str(name)))
+            if self.notes:
+                end16 = max(n["start16"] + n["dur"] for n in self.notes)
+                total = self._mp3_sec_of_s16(end16)
+            else:
+                total = chords[-1][0] + 4.0 * 60.0 / max(1.0, self.bpm_original)
+            audio = render_band(chords, self.bpm_original,
+                                self.beats_per_bar, total, ratio)
+            self._band_render_s = time.perf_counter() - t_start
+        except Exception as e:
+            log.warning(f"[Band] no puedo generar la banda: {e}")
+            audio = None
+        self._band_audio, self._band_key = audio, key
+        if audio is not None:
+            log.info(f"[Band] banda pre-renderizada: "
+                     f"{len(audio) / SAMPLERATE:.1f}s en "
+                     f"{self._band_render_s * 1000:.0f} ms")
+        return audio
+
+    def _prepare_band(self, offset_sec=0.0):
+        self._band_pending = None
+        if self._use_vsp:
+            return
+        audio = self._band_audio_for(self._speed_ratio())
+        if audio is None:
+            return
+        start = int(max(0.0, float(offset_sec)) * SAMPLERATE)
+        if start >= len(audio) - 64:
+            return
+        try:
+            self._band_pending = pygame.sndarray.make_sound(
+                to_int16(audio[start:]))
+        except Exception as e:
+            log.warning(f"[Mixer] no puedo crear el Sound de la banda: {e}")
+
+    def _start_band(self):
+        snd, self._band_pending = self._band_pending, None
+        if snd is None:
+            return
+        self._band_sound = snd
+        try:
+            if self._band_ch is None:
+                self._band_ch = pygame.mixer.Channel(1)
+            self._band_ch.stop()
+            self._band_ch.play(snd)
+            self._band_ch.set_volume(self._band_volume())
+        except Exception as e:
+            log.warning(f"[Mixer] no puedo reproducir la banda: {e}")
+
+    def _prepare_bass(self, offset_sec=0.0):
+        """Deja listo (render + pygame.Sound) el tramo de bajo a reproducir.
+
+        Se hace ANTES de arrancar el MP3: el render del SoundFont tarda
+        ~100 ms y si se hiciera después el bajo entraría tarde.
+        """
+        self._bass_pending = None
+        if self._use_vsp:
+            return                       # lo mezcla VarispeedPlayer
+        audio = self._bass_audio_for(self._speed_ratio())
+        if audio is None:
+            return
+        start = int(max(0.0, float(offset_sec)) * SAMPLERATE)
+        if start >= len(audio) - 64:
+            return
+        try:
+            self._bass_pending = pygame.sndarray.make_sound(to_int16(audio[start:]))
+        except Exception as e:
+            log.warning(f"[Mixer] no puedo crear el Sound del bajo: {e}")
+
+    def _start_bass(self):
+        """Arranca el Sound preparado en el canal reservado (canal 0)."""
+        snd, self._bass_pending = self._bass_pending, None
+        if snd is None:
+            return
+        self._bass_sound = snd
+        try:
+            if self._bass_ch is None:
+                self._bass_ch = pygame.mixer.Channel(0)
+            self._bass_ch.stop()
+            self._bass_ch.play(snd)
+            self._bass_ch.set_volume(self._bass_volume())
+        except Exception as e:
+            log.warning(f"[Mixer] no puedo reproducir el bajo: {e}")
+
     def _play_mp3(self, offset_sec=0.0):
         self._use_vsp = self._want_vsp()
+        self._prepare_bass(offset_sec)
+        self._prepare_band(offset_sec)
         if self._use_vsp:
             self._vsp.set_speed(self._speed_ratio())
             self._vsp.play(offset_sec)
         elif self._pgm_loaded:
             start_ms = max(0, int(offset_sec * 1000))
             pygame.mixer.music.play(start=start_ms / 1000.0)
+        self._start_bass()
+        self._start_band()
+        self._apply_mix()
 
     def _pause_mp3(self):
         if self._use_vsp:
             self._vsp.pause()
         elif self._pgm_loaded:
             pygame.mixer.music.pause()
+        try:
+            if self._bass_ch is not None:
+                self._bass_ch.pause()
+            if self._band_ch is not None:
+                self._band_ch.pause()
+        except Exception:
+            pass
 
     def _resume_mp3(self):
         if self._use_vsp:
             self._vsp.resume()
         elif self._pgm_loaded:
             pygame.mixer.music.unpause()
+        try:
+            if self._bass_ch is not None:
+                self._bass_ch.unpause()
+            if self._band_ch is not None:
+                self._band_ch.unpause()
+        except Exception:
+            pass
 
-    def _stop_mp3(self):
+    def _stop_mp3(self, fade_ms=0):
         if self._use_vsp:
             self._vsp.stop()
         elif self._pgm_loaded:
-            pygame.mixer.music.stop()
+            if fade_ms:
+                pygame.mixer.music.fadeout(fade_ms)
+            else:
+                pygame.mixer.music.stop()
+        try:
+            for ch in (self._bass_ch, self._band_ch):
+                if ch is not None:
+                    if fade_ms:
+                        ch.fadeout(fade_ms)
+                    else:
+                        ch.stop()
+        except Exception:
+            pass
 
     def reiniciar(self):
         self.playing       = False
@@ -1835,18 +2218,58 @@ class BassKaraoke(
             self._play_mp3(offset)
 
     def ajustar_bpm(self, delta):
+        before = self._speed_ratio()
         self.bpm = max(40, min(300, self.bpm + delta))
+        after = self._speed_ratio()
+        if abs(after - before) < 1e-9:
+            return
         if self._vsp and self._vsp.loaded:
-            self._vsp.set_speed(self._speed_ratio())
+            self._vsp.set_speed(after)
+        if not self.playing:
+            return
+        if self._use_vsp:
+            return                    # el swap del VSP recoloca todo
+        if self._vsp and self._vsp.loaded:
+            # pygame -> VSP: reiniciar; el hilo de estiramiento ya esta
+            # re-renderizando el bajo y la banda al nuevo ratio.
+            offset = self._mp3_sec_of_s16(self.beat_time)
+            self._stop_mp3()
+            self._play_mp3(offset)
+            return
+        # Sin MP3/VSP el bajo y la banda están pre-renderizados a ritmo fijo:
+        # hay que re-renderizarlos al nuevo tempo y re-sincronizar después.
+        if abs(after - 1.0) >= 0.005:
+            self._resync_target = after
+
+    def _poll_resync(self):
+        """Re-renderiza bajo/banda al nuevo tempo (camino sin Varispeed)."""
+        if self._resync_ready is not None:
+            ratio, self._resync_ready = self._resync_ready, None
+            if self.playing and abs(self._speed_ratio() - ratio) < 1e-6:
+                offset = self._mp3_sec_of_s16(self.beat_time)
+                self._stop_mp3()
+                self._play_mp3(offset)
+            return
+        if self._resync_target is None or self._resync_busy:
+            return
+        ratio, self._resync_target = self._resync_target, None
+        self._resync_busy = True
+
+        def work():
+            try:
+                self._bass_audio_for(ratio)
+                self._band_audio_for(ratio)
+            except Exception as e:
+                log.warning(f"[Mixer] no puedo re-renderizar al tempo {ratio:.3f}: {e}")
+            finally:
+                self._resync_busy = False
+                self._resync_ready = ratio
+
+        threading.Thread(target=work, daemon=True).start()
 
     def toggle_mute(self):
         self.muted = not self.muted
-        if self.playing:
-            if self.muted:
-                self._stop_mp3()
-            else:
-                offset = self._mp3_sec_of_s16(self.beat_time)
-                self._play_mp3(offset)
+        self._apply_mix()
 
     def cycle_score_renderer(self):
         if self.score_renderer == "verovio" and MUSIC21_OK:
@@ -1868,6 +2291,7 @@ class BassKaraoke(
     def update(self, dt):
         self._t += dt
         self._poll_generation()
+        self._poll_resync()
         if self._gen_msg_timer > 0:
             self._gen_msg_timer = max(0.0, self._gen_msg_timer - dt)
         if self._config_msg_timer > 0:
@@ -2049,6 +2473,7 @@ class BassKaraoke(
 
         if self.note_idx >= len(self.notes):
             self.playing = False
+            self._stop_mp3(fade_ms=200)
 
     # ══════════════════════════════════════════════════════════════════
     #  DRAW
@@ -2080,6 +2505,8 @@ class BassKaraoke(
             draw_song_menu(self)
         if self.view.feature_menu_open:
             draw_feature_menu(self)
+        if self.view.mixer_open:
+            draw_mixer(self)
         if self.view.tuner_open:
             draw_tuner(self)
         if self.training_open:
@@ -2385,9 +2812,11 @@ class BassKaraoke(
         cd_str = "C:countdown ON" if self.countdown_enabled else "C:countdown OFF"
         metro_str = "N:metro ON" if self.metro_sound else "N:metro OFF"
         mute_str = " · M:MUTE" if self.muted else ""
+        bass_str = " · bajo:OFF" if self.muted_bass else ""
+        band_str = " · banda:OFF" if self.muted_band else ""
         off_t      = self.font_tiny.render(
             f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}"
-            f"   {cd_str} · {metro_str}{mute_str}",
+            f"   {cd_str} · {metro_str}{mute_str}{bass_str}{band_str}   F2:mixer",
             True, off_col)
         self.screen.blit(off_t, (12, 36))
 
@@ -3002,6 +3431,28 @@ class BassKaraoke(
                     self.view.song_menu_open = False
                 return True
 
+            # ── Mixer (F2) ─────────────────────────────────────────────
+            if self.view.mixer_open:
+                tracks = self.MIX_TRACKS
+                tid    = tracks[self.view.mixer_sel][0]
+                vol, _ = self._mix_get(tid)
+                if event.key == pygame.K_UP:
+                    self.view.mixer_sel = max(0, self.view.mixer_sel - 1)
+                elif event.key == pygame.K_DOWN:
+                    self.view.mixer_sel = min(len(tracks) - 1,
+                                              self.view.mixer_sel + 1)
+                elif event.key == pygame.K_LEFT:
+                    self._mix_set(tid, vol=vol - 0.05)
+                elif event.key == pygame.K_RIGHT:
+                    self._mix_set(tid, vol=vol + 0.05)
+                elif event.key == pygame.K_m:
+                    _, mute = self._mix_get(tid)
+                    self._mix_set(tid, mute=not mute)
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
+                                   pygame.K_ESCAPE, pygame.K_F2):
+                    self.view.mixer_open = False
+                return True
+
             # ── Tuner ──────────────────────────────────────────────────
             if self.view.tuner_open:
                 if event.key in (pygame.K_ESCAPE, pygame.K_t):
@@ -3158,10 +3609,14 @@ class BassKaraoke(
                 self._toggle_chord_editor()
             elif event.key == pygame.K_F1:
                 self.view.help_open = not self.view.help_open
+            elif event.key == pygame.K_F2:
+                self.view.mixer_open = not self.view.mixer_open
+                self.view.mixer_sel  = 0
             elif event.key == pygame.K_F5:
                 self._save_config()
             elif event.key == pygame.K_F6:
                 self._load_config()
+                self._apply_mix()
             elif (self.chord_bar_sel_measure is not None and
                   event.key in (pygame.K_RETURN, pygame.K_KP_ENTER)):
                 self._chord_bar_edit_selected()

@@ -12,6 +12,7 @@ else:
     _BASE_DIR = Path(__file__).parent.parent   # carpeta raíz del proyecto
 
 SONGS_DIR     = str(_BASE_DIR / "songs")
+ASSETS_DIR    = str(_BASE_DIR / "assets")
 
 # Canción por defecto (fallback cuando no hay configuración guardada)
 MUSICXML_PATH = str(_BASE_DIR / "songs" / "mitab" / "mitab.musicxml")

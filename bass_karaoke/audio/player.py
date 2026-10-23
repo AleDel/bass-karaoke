@@ -60,6 +60,12 @@ class VarispeedPlayer:
         self._applied_ratio = 1.0
         self._target_ratio  = 1.0
         self.volume         = 1.0
+        self.extra          = None   # pista extra (frames, 2) float32
+        self.extra_volume   = 1.0
+        self._extra_render  = None   # callable(ratio) -> (frames, 2)
+        self.extra2         = None   # segunda pista extra (banda)
+        self.extra2_volume  = 1.0
+        self._extra2_render = None
         self._playing       = False
         self._lock          = threading.Lock()
         self._stream        = None
@@ -78,6 +84,8 @@ class VarispeedPlayer:
             arr = y.astype(np.float32)
             self.data_orig      = arr
             self.data           = arr
+            self.extra          = None
+            self.extra2         = None
             self._applied_ratio = 1.0
             self._target_ratio  = 1.0
             self.sr             = SAMPLERATE
@@ -110,13 +118,23 @@ class VarispeedPlayer:
                 out[:len(chunk)] = chunk
             else:
                 out = chunk
-            outdata[:] = (out * self.volume).reshape(outdata.shape)
+            mix = out * self.volume
+            for buf, vol in ((self.extra, self.extra_volume),
+                             (self.extra2, self.extra2_volume)):
+                if buf is None or vol <= 0.0:
+                    continue
+                seg = buf[start:start + len(mix)]
+                if len(seg) == len(mix):
+                    mix = mix + seg * vol
+            np.clip(mix, -1.0, 1.0, out=mix)
+            outdata[:] = mix.reshape(outdata.shape)
             self.pos += frames
 
     def play(self, offset_sec: float = 0.0):
         if not self._loaded:
             return
         self.stop()
+        self._refresh_extra(self._applied_ratio)
         with self._lock:
             self.pos      = max(0.0, offset_sec * self.sr / max(self._applied_ratio, 0.01))
             self._playing = True
@@ -171,10 +189,14 @@ class VarispeedPlayer:
             ch0 = librosa.effects.time_stretch(orig[:, 0], rate=ratio)
             ch1 = librosa.effects.time_stretch(orig[:, 1], rate=ratio)
             new_data = np.stack([ch0, ch1], axis=1).astype(np.float32)
+            extra = self._render_extra_for(ratio)
+            extra2 = self._render_extra2_for(ratio)
             with self._lock:
                 old_ratio = self._applied_ratio
                 new_pos   = self.pos * old_ratio / ratio if ratio > 0 else 0.0
                 self.data           = new_data
+                self.extra          = extra
+                self.extra2         = extra2
                 self._applied_ratio = ratio
                 self.pos            = max(0.0, min(new_pos, len(new_data) - 1))
             log.info(f"[TimeStretch] listo  frames={len(new_data)}  dur={len(new_data)/self.sr:.1f}s")
@@ -188,6 +210,49 @@ class VarispeedPlayer:
     def set_volume(self, v: float):
         with self._lock:
             self.volume = max(0.0, min(1.0, float(v)))
+
+    # ── pista extra (bajo del mixer) ────────────────────────────────────
+    def set_extra_render(self, fn):
+        """``fn(ratio) -> (frames, 2) float32`` o None: pista ya estirada."""
+        self._extra_render = fn
+
+    def set_extra_volume(self, v: float):
+        self.extra_volume = max(0.0, min(1.0, float(v)))
+
+    def set_extra2_render(self, fn):
+        """Segunda pista extra (banda): ``fn(ratio) -> (frames, 2)`` o None."""
+        self._extra2_render = fn
+
+    def set_extra2_volume(self, v: float):
+        self.extra2_volume = max(0.0, min(1.0, float(v)))
+
+    def _render_extra2_for(self, ratio):
+        if self._extra2_render is None:
+            return None
+        try:
+            a = self._extra2_render(ratio)
+        except Exception as e:
+            log.warning(f"[Mixer] pista de banda no disponible: {e}")
+            return None
+        if a is None:
+            return None
+        return np.ascontiguousarray(a, dtype=np.float32)
+
+    def _render_extra_for(self, ratio):
+        if self._extra_render is None:
+            return None
+        try:
+            a = self._extra_render(ratio)
+        except Exception as e:
+            log.warning(f"[Mixer] pista extra no disponible: {e}")
+            return None
+        if a is None:
+            return None
+        return np.ascontiguousarray(a, dtype=np.float32)
+
+    def _refresh_extra(self, ratio):
+        self.extra = self._render_extra_for(ratio)
+        self.extra2 = self._render_extra2_for(ratio)
 
     @property
     def loaded(self) -> bool:

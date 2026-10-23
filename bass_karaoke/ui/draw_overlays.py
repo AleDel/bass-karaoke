@@ -6,6 +6,7 @@ Overlays de pantalla completa:
   - Menú de método de pitch (draw_pitch_menu)
 """
 import math
+import os
 
 import pygame
 
@@ -399,6 +400,98 @@ def draw_song_menu(app) -> None:
     app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
 
 
+def draw_mixer(app) -> None:
+    """Mixer de pistas: canción / bajo / banda / metrónomo (tecla F2)."""
+    from ..audio.bass_track import backend as bass_backend
+    from ..audio.bass_track import find_soundfont
+    from ..audio.band import available as band_ok
+
+    tracks = app.MIX_TRACKS
+    row_h  = 46
+    mw     = 620
+    mh     = 96 + len(tracks) * row_h
+    mx, my = W // 2 - mw // 2, H // 2 - mh // 2
+
+    ov = pygame.Surface((W, H), pygame.SRCALPHA)
+    ov.fill(C_OVERLAY)
+    app.screen.blit(ov, (0, 0))
+
+    pygame.draw.rect(app.screen, C_PANEL,  (mx, my, mw, mh), border_radius=12)
+    pygame.draw.rect(app.screen, C_ACCENT, (mx, my, mw, mh), 2, border_radius=12)
+
+    hdr = app.font_med.render("MIXER", True, C_ACCENT)
+    app.screen.blit(hdr, (mx + mw // 2 - hdr.get_width() // 2, my + 12))
+    pygame.draw.line(app.screen, C_DGRAY,
+                     (mx + 10, my + 40), (mx + mw - 10, my + 40), 1)
+
+    top_y  = my + 54
+    bar_x  = mx + 190
+    bar_w  = 300
+    segs   = 24
+
+    for i, (tid, name, sub) in enumerate(tracks):
+        ry     = top_y + i * row_h
+        is_sel = (i == app.view.mixer_sel)
+        vol, mute = app._mix_get(tid)
+        if is_sel:
+            pygame.draw.rect(app.screen, C_DGRAY,
+                             (mx + 8, ry - 6, mw - 16, row_h - 6),
+                             border_radius=4)
+        col = C_WHITE if not mute else C_GRAY
+        if is_sel:
+            col = C_ACCENT
+        lbl = app.font_small.render(name, True, col)
+        app.screen.blit(lbl, (mx + 16, ry + 2))
+        s = app.font_tiny.render(sub, True, C_GRAY)
+        app.screen.blit(s, (mx + 16, ry + 22))
+
+        for k in range(segs):
+            on  = (k + 1) / segs <= vol + 1e-6
+            x   = bar_x + k * (bar_w // segs)
+            if mute or not on:
+                c = C_DGRAY
+            elif k >= segs - 3:
+                c = C_RED
+            elif k >= segs - 6:
+                c = C_WAIT
+            else:
+                c = C_GREEN
+            pygame.draw.rect(app.screen, c,
+                             (x, ry + 8, bar_w // segs - 2, 14), border_radius=2)
+
+        pct = app.font_tiny.render(f"{int(round(vol * 100)):3d}%", True, col)
+        app.screen.blit(pct, (bar_x + bar_w + 12, ry + 7))
+        if mute:
+            m = app.font_tiny.render("MUTE", True, C_RED)
+            app.screen.blit(m, (bar_x + bar_w + 58, ry + 7))
+
+    info_y = top_y + len(tracks) * row_h + 4
+    if bass_backend() == "sf2":
+        sf_name = os.path.basename(find_soundfont())
+        if sf_name.lower().startswith("jjazzlab"):
+            info = "bajo: SoundFont JJazzLab (Acoustic Bass)"
+        else:
+            info = f"bajo: SoundFont {sf_name} (Acoustic Bass)"
+        icol = C_OK
+    else:
+        info = ("bajo: síntesis interna  -  instala 'Bass SoundFont' "
+                "en I para timbre real")
+        icol = C_GRAY
+    if band_ok():
+        info += "   ·   banda: jjSwing (JJazzLab)"
+    else:
+        info += "   ·   banda: no disponible (JJazzLab no instalado)"
+        icol = C_GRAY
+    app.screen.blit(app.font_tiny.render(
+        _fit_text(app.font_tiny, info, mw - 32), True, icol),
+        (mx + 16, info_y))
+
+    hint = app.font_tiny.render(
+        "Up/Dn pista    Izq/Der volumen    M mute    ENTER / F2 cerrar",
+        True, C_GRAY)
+    app.screen.blit(hint, (mx + mw // 2 - hint.get_width() // 2, my + mh - 22))
+
+
 def draw_help(app) -> None:
     """Overlay con todos los atajos, agrupados. F1 o ESC para cerrar."""
     groups = [
@@ -416,7 +509,8 @@ def draw_help(app) -> None:
             ("F5 / F6", "Guardar / cargar config  (Ctrl+S = acordes u offset)"),
         ]),
         ("Sonido", [
-            ("M", "Silenciar MP3"),
+            ("F2", "Mixer: canción / bajo / banda / metrónomo (volumen y mute)"),
+            ("M", "Silenciar canción (MP3)"),
             ("N", "Metrónomo on/off"),
             ("D", "Dispositivo de entrada"),
             ("P", "Método de pitch"),

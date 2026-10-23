@@ -24,6 +24,19 @@ Incluye canciones como *Feet Don't Fail Me Now* — Joy Crookes | Bajo: Dayna Fi
 - **Ajuste de tempo por canción** (↑/↓): con varispeed el MP3 se estira/encoge
   manteniendo el tono para que música y tablatura sigan sincronizadas.
 - **Metrónomo, afinador y mapa del mástil** integrados.
+- **Mixer de pistas** (`F2`): canción (MP3), línea de bajo de la partitura,
+  banda y metrónomo, cada uno con su volumen y mute. El bajo se sintetiza offline
+  y suena sincronizado con el MP3 (también con varispeed y al hacer seek). Con la
+  funcionalidad *Bass SoundFont* se oye con timbre real de bajo eléctrico; sin
+  ella suena con síntesis interna. La **banda** (batería, piano y guitarra) se
+  genera offline con los patrones y sonidos de JJazzLab si está instalado. Si la
+  carpeta de la canción tiene un `<canción>.mid`, se renderiza ese MIDI (todos
+  sus canales) como banda en lugar de generarla.
+- **Canciones desde JJazzLab** (`python -m bass_karaoke.sng <canción>.sng`):
+  genera `<canción>.musicxml` + `<canción>.chords.json`. La línea de bajo usa
+  las frases reales del ritmo *jjSwing* (`Bass` de `psBase.yjz`), con la
+  variación de cada parte (`rpVariationID`: Main A-1/B-1/C-1/D-1) y transporte
+  por raíz; sin JJazzLab cae al generador `jjazz` interno.
 - **Standalone** de un solo archivo (`dist/BassKaraoke.exe`) que instala
   funcionalidades opcionales desde el propio menú `I`.
 
@@ -160,6 +173,7 @@ movido una marca. Todo se guarda por canción en la config.
 | `P` | Selector de método de pitch |
 | `S` | Cambiar renderizador de partitura (Verovio ↔ Music21) |
 | `M` | Silenciar MP3 |
+| `F2` | Mixer: canción / bajo / banda / metrónomo (volumen y mute) |
 | `N` | Sonido de metrónomo |
 | `T` | Afinador |
 | `H` | Mapa del mástil |

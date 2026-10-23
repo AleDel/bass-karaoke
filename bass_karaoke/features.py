@@ -166,6 +166,37 @@ FEATURES = [
         ),
     },
     {
+        "id": "bass-sf2",
+        "name": "Bass SoundFont — timbre real en el mixer",
+        "category": "audio",
+        "packages": ["tinysoundfont"],
+        "requires": [],
+        "size": "~0.2 MB (+ assets/TimGM6mb.sf2)",
+        "needs": "CPU",
+        "desc": (
+            "Hace sonar la pista de bajo del mixer (tecla F2) con un "
+            "SoundFont: bajo eléctrico pulsado de verdad, en vez de la "
+            "síntesis interna. Sin esta funcionalidad el mixer sigue "
+            "funcionando, solo que con un timbre sintético."
+        ),
+    },
+    {
+        "id": "band",
+        "name": "Banda jjSwing (JJazzLab) — batería, piano y guitarra",
+        "category": "audio",
+        "packages": [],
+        "requires": ["bass-sf2"],
+        "size": "usar datos instalados de JJazzLab",
+        "needs": "CPU",
+        "desc": (
+            "Añade al mixer la pista 'Banda': batería con swing, piano y "
+            "guitarra generados desde el cifrado, con los patrones reales "
+            "del ritmo jjSwing de JJazzLab (drums44DB + psBase). Requiere "
+            "JJazzLab instalado (los datos se leen de su jar, no se "
+            "redistribuyen)."
+        ),
+    },
+    {
         "id": "music21",
         "name": "Partitura estándar (music21)",
         "category": "score",
@@ -283,6 +314,12 @@ def session_flag(fid: str):
         if fid == "music21":
             from .score import MUSIC21_OK
             return bool(MUSIC21_OK)
+        if fid == "bass-sf2":
+            from .audio.bass_track import backend
+            return backend() == "sf2"
+        if fid == "band":
+            from .audio.band import available, midi_available
+            return available() or midi_available()
     except Exception:
         return False
     return None

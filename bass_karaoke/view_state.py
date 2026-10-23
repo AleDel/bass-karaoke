@@ -37,6 +37,8 @@ class ViewState:
     feature_menu_sel: int = 0
     song_menu_open: bool = False
     song_menu_sel: int = 0
+    mixer_open: bool = False
+    mixer_sel: int = 0
 
     # ── Arrastre de la onda / búsqueda ──────────────────────────────────
     _wave_dragging: bool = False

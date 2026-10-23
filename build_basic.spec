@@ -47,6 +47,7 @@ hiddenimports = [
     "bass_karaoke.features",
     "bass_karaoke.audio",
     "bass_karaoke.audio.player",
+    "bass_karaoke.audio.bass_track",
     "bass_karaoke.audio.pitch_engine",
     "bass_karaoke.score",
     "bass_karaoke.score.verovio_renderer",
@@ -72,6 +73,8 @@ excludes = [
     # Ciencia de datos que arrastran librosa/scipy
     "scipy", "numba", "llvmlite", "sklearn", "scikit_learn",
     "matplotlib", "sympy", "networkx", "pretty_midi", "joblib",
+    # SoundFont opcional del mixer (el .sf2 sí va en assets/)
+    "tinysoundfont",
     # Renderizado de partitura (solo music21 queda opcional: verovio y
     # cairosvg van empaquetados por defecto)
     "music21",
