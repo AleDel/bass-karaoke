@@ -383,7 +383,7 @@ def _approach(prev: int, target: int, lo: int = 28, hi: int = 45):
     return None if best is None else best[1]
 
 
-def generate_line(song: dict, style: str = "walking"):
+def generate_line(song: dict, style: str = "yjz"):
     """Devuelve ``[(start16, dur16, midi)]`` para el cifrado de ``song``."""
     if style == "yjz":
         return _generate_yjz(song)
@@ -708,10 +708,10 @@ def main(argv=None) -> int:
         i += 1
     if not files:
         print("uso: python -m bass_karaoke.sng FICHERO.sng [...] "
-              "[--style walking|jjazz|two_feel] [--out DIR] [--print] [--force]",
+              "[--style yjz|walking|jjazz|two_feel] [--out DIR] [--print] [--force]",
               file=sys.stderr)
         return 2
-    if style not in ("walking", "jjazz", "two_feel"):
+    if style not in ("yjz", "walking", "jjazz", "two_feel"):
         print(f"estilo desconocido: {style}", file=sys.stderr)
         return 2
 
