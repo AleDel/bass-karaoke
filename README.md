@@ -5,7 +5,8 @@ tiempo real, detección de tono (pitch) y visualización de partitura. Toca con 
 bajo conectado al PC y la app te dice qué nota tocar, cuándo suena correcta y
 tu precisión global.
 
-Incluye canciones como *Feet Don't Fail Me Now* — Joy Crookes | Bajo: Dayna Fisher.
+Incluye canciones como *Feet Don't Fail Me Now* — Joy Crookes | Bajo: Dayna Fisher,
+y temas de jazz generados desde JJazzLab (*26-2*, *502 Blues*, *A Foggy Day*, *Skylark*).
 
 ![Bass Karaoke Screenshot](assets/Screenshot.png)
 
@@ -22,7 +23,8 @@ Incluye canciones como *Feet Don't Fail Me Now* — Joy Crookes | Bajo: Dayna Fi
 - **Editor de alineación** con waveform del MP3 para ajustar offset y tempo por
   canción a oído.
 - **Ajuste de tempo por canción** (↑/↓): con varispeed el MP3 se estira/encoge
-  manteniendo el tono para que música y tablatura sigan sincronizadas.
+  manteniendo el tono, y el bajo y la banda se re-renderizan al nuevo tempo para
+  que todo siga sincronizado (también en canciones sin MP3).
 - **Metrónomo, afinador y mapa del mástil** integrados.
 - **Mixer de pistas** (`F2`): canción (MP3), línea de bajo de la partitura,
   banda y metrónomo, cada uno con su volumen y mute. El bajo se sintetiza offline
@@ -47,6 +49,9 @@ Incluye canciones como *Feet Don't Fail Me Now* — Joy Crookes | Bajo: Dayna Fi
 - Python **3.10** (Windows)
 - Bajo conectado al PC: interfaz USB (Focusrite, Behringer…) o cable a la
   entrada de micrófono (jack 3.5 mm)
+- Opcional: **JJazzLab 5.x** instalado (banda con sus patrones y su SoundFont) y
+  `tinysoundfont` (funcionalidad *Bass SoundFont* del menú `I`). Sin ellos la app
+  funciona, pero el bajo y la banda suenan con síntesis interna.
 
 ---
 
@@ -95,22 +100,40 @@ Cada canción vive en una subcarpeta de `songs/`:
 
 ```
 songs/
-  feet_dont_fail_me_now/   <nombre>.musicxml, <nombre>.tg, feet_dont_fail_me_now.mp3
-  maitreya/                <nombre>.musicxml, <nombre>.tg
-  infant_eyes/             <nombre>.musicxml
+  26-2/                    26-2.musicxml, 26-2.chords.json
+  ayer_hable_con_dios/     <nombre>.musicxml, <nombre>.chords.json, <nombre>.mp3
+  feet_dont_fail_me_now/   <nombre>.musicxml, <nombre>.tg, <nombre>.mp3
+  skylark/                 <nombre>.musicxml
 ```
 
 Para añadir una:
 
 1. Crea `songs/<nombre>/`.
-2. Añade el `musicxml` (obligatorio), un `.tg` de TuxGuitar (opcional, notas de
-   gracia) y un `.mp3` (opcional — sin MP3 se practica solo con metrónomo/tablatura).
+2. Añade el `musicxml` (obligatorio). Opcionales: `.chords.json` (tira de
+   acordes y banda), `<nombre>.mid` (la banda se renderiza de ese MIDI) y
+   `.mp3` (sin MP3 se practica solo con metrónomo/tablatura).
 3. Pulsa **`L`** en la app para abrir el selector.
 
 El MusicXML puede ser:
 - Export de **TuxGuitar** (notación + tablatura con trastes) — recomendado.
 - Export de **MuseScore** solo con notación: la app deriva traste/cuerda desde la
   altura de cada nota (la tablatura puede diferir de la original).
+
+### Canciones desde JJazzLab
+
+Si tienes un `.sng` de JJazzLab, se genera la partitura y el cifrado con:
+
+```bash
+python -m bass_karaoke.sng "<canción>.sng" --out songs/<nombre>
+```
+
+- `--style yjz` (por defecto): línea de bajo con las frases reales del ritmo
+  *jjSwing*; `walking`, `jjazz` y `two_feel` son los generadores internos
+  alternativos.
+- `--print` muestra el cifrado y la línea generada; `--force` sobrescribe.
+- Escribe `<nombre>.musicxml` + `<nombre>.chords.json`. La banda usa los
+  patrones y el SoundFont de JJazzLab si está instalado (se leen de su
+  instalación, no se redistribuyen).
 
 ### Tempo de la canción
 
@@ -120,7 +143,8 @@ MuseScore (Texto → Tempo) y re-exporta. La app respeta los cambios de tempo a
 mitad de tema (scroll, metrónomo y sincronización siguen cada tramo).
 
 El ajuste con `↑/↓` (estirar el MP3 más lento/rápido) se guarda **por canción**
-con **`F5`**.
+con **`F5`**. En canciones sin MP3 no hay nada que estirar: el bajo y la banda se
+regeneran al tempo elegido y se re-sincronizan con la tablatura.
 
 ### Si el bajo no empieza al inicio del MP3
 
@@ -173,7 +197,7 @@ movido una marca. Todo se guarda por canción en la config.
 | `P` | Selector de método de pitch |
 | `S` | Cambiar renderizador de partitura (Verovio ↔ Music21) |
 | `M` | Silenciar MP3 |
-| `F2` | Mixer: canción / bajo / banda / metrónomo (volumen y mute) |
+| `F2` | Mixer: canción / bajo / banda / metrónomo (↑/↓ pista, ←/→ volumen, `M` mute) |
 | `N` | Sonido de metrónomo |
 | `T` | Afinador |
 | `H` | Mapa del mástil |
@@ -222,7 +246,8 @@ Equivalente manual:
 El resultado es `dist/BassKaraoke.exe` (~50 MB). Para desplegarlo en otro PC:
 
 1. Copia el exe junto con las carpetas **`songs/`** y **`models/`** (no van
-   empaquetadas para poder añadir canciones sin recompilar).
+   empaquetadas para poder añadir canciones sin recompilar). La carpeta
+   `assets/` sí va dentro del exe (incluido el SoundFont `TimGM6mb.sf2`).
 2. Las funcionalidades opcionales (torch/crepe, pesto, varispeed, etc.) se
    instalan desde el menú **`I`** y se guardan en `./features` junto al exe;
    tras instalarlas hay que reiniciar la app.
@@ -246,7 +271,7 @@ launcher.py        → punto de entrada del exe (modo BK_VERIFY=1 para auto-chec
 build_basic.spec   → spec de PyInstaller del standalone básico
 build.ps1          → script de build
 models/            → modelos de detección de pitch (ONNX)
-assets/            → recursos estáticos (captura, fuentes, etc.)
+assets/            → recursos estáticos (captura, SoundFont GM, etc.)
 songs/             → canciones (cada una en su subcarpeta)
 tests/             → scripts de prueba del detector de pitch
 scripts/           → utilidades (listar dispositivos de audio, etc.)
@@ -269,6 +294,11 @@ requirements.txt
 → Comprueba que tu interfaz aparece como dispositivo de entrada en Windows
 → Sube el volumen de entrada en el mezclador de Windows
 → Usa la tecla **`D`** para elegir el dispositivo correcto
+
+**La banda suena a sintetizador y sin batería**
+→ Instala **JJazzLab** (la banda lee sus patrones y su SoundFont) y la
+funcionalidad *Bass SoundFont* desde el menú **`I`**, y reinicia.
+→ Sin JJazzLab, un `<canción>.mid` junto al musicxml también sirve como banda.
 
 **La partitura no se renderiza en el standalone**
 → Los DLLs de cairo se toman del GTK2-Runtime de la máquina de build. Si en el
