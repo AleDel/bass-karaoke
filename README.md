@@ -34,11 +34,12 @@ y temas de jazz generados desde JJazzLab (*26-2*, *502 Blues*, *A Foggy Day*, *S
   genera offline con los patrones y sonidos de JJazzLab si está instalado. Si la
   carpeta de la canción tiene un `<canción>.mid`, se renderiza ese MIDI (todos
   sus canales) como banda en lugar de generarla.
-- **Canciones desde JJazzLab** (`python -m bass_karaoke.sng <canción>.sng`):
-  genera `<canción>.musicxml` + `<canción>.chords.json`. La línea de bajo usa
-  las frases reales del ritmo *jjSwing* (`Bass` de `psBase.yjz`), con la
-  variación de cada parte (`rpVariationID`: Main A-1/B-1/C-1/D-1) y transporte
-  por raíz; sin JJazzLab cae al generador `jjazz` interno.
+- **Canciones desde JJazzLab** (`python -m bass_karaoke.sng <canción>.sng`, o
+  directamente `F7` sobre un `.sng` en `songs/`): genera `<canción>.musicxml` +
+  `<canción>.chords.json`. La línea de bajo usa las frases reales del ritmo
+  *jjSwing* (`Bass` de `psBase.yjz`), con la variación de cada parte
+  (`rpVariationID`: Main A-1/B-1/C-1/D-1) y transporte por raíz; sin JJazzLab
+  cae al generador `jjazz` interno.
 - **Standalone** de un solo archivo (`dist/BassKaraoke.exe`) que instala
   funcionalidades opcionales desde el propio menú `I`.
 
@@ -110,8 +111,9 @@ Para añadir una:
 
 1. Crea `songs/<nombre>/`.
 2. Añade el `musicxml` (obligatorio). Opcionales: `.chords.json` (tira de
-   acordes y banda), `<nombre>.mid` (la banda se renderiza de ese MIDI) y
-   `.mp3` (sin MP3 se practica solo con metrónomo/tablatura).
+   acordes y banda), `<nombre>.mid` (la banda se renderiza de ese MIDI), `.mp3`
+   (sin MP3 se practica solo con metrónomo/tablatura) o un `.sng` de JJazzLab
+   (la app lo convierte con `F7`).
 3. Pulsa **`L`** en la app para abrir el selector.
 
 El MusicXML puede ser:
@@ -121,10 +123,14 @@ El MusicXML puede ser:
 
 ### Canciones desde JJazzLab
 
-Si tienes un `.sng` de JJazzLab, se genera la partitura y el cifrado con:
+Copia el `.sng` a `songs/<nombre>/` y aparecerá en el selector (`L`) como
+pendiente de generar: pulsa **`F7`** y la app escribe ahí mismo
+`<nombre>.musicxml` + `<nombre>.chords.json` (sin salir de la app).
+
+También se puede hacer desde la terminal, por ejemplo en lote:
 
 ```bash
-python -m bass_karaoke.sng "<canción>.sng" --out songs/<nombre>
+python -m bass_karaoke.sng JJazzLab-Jazz-1460\*.sng
 ```
 
 - `--style yjz` (por defecto): línea de bajo con las frases reales del ritmo
@@ -198,6 +204,8 @@ movido una marca. Todo se guarda por canción en la config.
 | `S` | Cambiar renderizador de partitura (Verovio ↔ Music21) |
 | `M` | Silenciar MP3 |
 | `F2` | Mixer: canción / bajo / banda / metrónomo (↑/↓ pista, ←/→ volumen, `M` mute) |
+| `F7` | Generar la partitura que falta (desde el audio o el `.sng` de la canción) |
+| `F8` | Compás 3/4 ↔ 4/4 al generar desde audio |
 | `N` | Sonido de metrónomo |
 | `T` | Afinador |
 | `H` | Mapa del mástil |

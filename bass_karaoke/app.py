@@ -392,7 +392,7 @@ class BassKaraoke(
         self._offset_map    = {}
         self._song_start_map = {}
         self._tempo_maps    = {}
-        # ── Generación de partitura (canciones solo-audio, F7) ────────
+        # ── Generación de partitura (canciones solo-audio o .sng, F7) ──
         self.gen_running        = False
         self.gen_msg            = ""
         self.gen_frac           = 0.0
@@ -400,6 +400,7 @@ class BassKaraoke(
         self.gen_error          = ""
         self.gen_notice         = False
         self.gen_song_dir       = None
+        self.gen_from_sng       = False
         self.gen_barlen         = 3
         self.gen_bars_per_chord = 2
         self._gen_msg_timer     = 0.0
@@ -626,7 +627,8 @@ class BassKaraoke(
                 audio = self._find_file(folder, ext)
                 if audio:
                     break
-            if not musicxml and not audio:
+            sng = self._find_file(folder, ".sng")
+            if not musicxml and not audio and not sng:
                 continue
             name = entry.replace("_", " ").replace("-", " ").title()
             songs.append({
@@ -637,13 +639,15 @@ class BassKaraoke(
                 "mp3":        self._find_file(folder, ".mp3"),
                 "mid":        (self._find_file(folder, ".mid")
                                or self._find_file(folder, ".midi")),
+                "sng":        sng,
                 "audio":      audio,
                 "audio_only": musicxml is None,
             })
             log.info(f"[Canción] {name:24s}  "
                   f"xml={'SÍ' if musicxml else 'NO (F7)'}  "
                   f"audio={'SÍ' if audio else 'no'}  "
-                  f"mid={'SÍ' if songs[-1]['mid'] else 'no'}")
+                  f"mid={'SÍ' if songs[-1]['mid'] else 'no'}  "
+                  f"sng={'SÍ' if sng else 'no'}")
         return songs
 
     @staticmethod
@@ -682,7 +686,8 @@ class BassKaraoke(
             self.beats_per_bar  = 4
             self.tempo_map      = [(0, self.bpm, "quarter")]
             self.score_tempo_map = [list(x) for x in self.tempo_map]
-            log.info(f"[Gen] {self.song_name}: sin partitura — pulsa F7 para generarla")
+            log.info(f"[Gen] {self.song_name}: sin partitura — pulsa F7 para "
+                     f"generarla{' desde el .sng' if song.get('sng') else ''}")
         self._load_mp3(song.get("audio") or song["mp3"])
         self._build_song_waveform()
         self.reiniciar()
@@ -823,14 +828,21 @@ class BassKaraoke(
         if self.gen_running:
             return
         song = self.songs[self.song_idx]
+        sng = song.get("sng") if not song.get("musicxml") else None
         self.gen_running  = True
         self.gen_msg      = "Preparando…"
         self.gen_frac     = 0.0
         self.gen_error    = ""
         self.gen_result   = None
         self.gen_song_dir = song["dir"]
+        self.gen_from_sng = bool(sng)
         self.gen_notice   = False
-        log.info(f"[Gen] Transcribiendo {self.song_name} (barlen={self.gen_barlen})…")
+        if sng:
+            log.info(f"[Gen] Generando partitura de {self.song_name} desde "
+                     f"{os.path.basename(sng)}…")
+        else:
+            log.info(f"[Gen] Transcribiendo {self.song_name} "
+                     f"(barlen={self.gen_barlen})…")
 
         def progress(msg, frac=None):
             self.gen_msg = msg
@@ -839,6 +851,16 @@ class BassKaraoke(
 
         def worker():
             try:
+                if sng:
+                    from .sng import build_song
+                    res = build_song(sng, out_dir=song["dir"])
+                    self.gen_result = {
+                        "notes": len(res["notes"]),
+                        "measures": res["song"]["total_bars"],
+                        "bpm": res["song"]["tempo"],
+                        "suggested_offset": 0.0,
+                    }
+                    return
                 from .transcribe import transcribe_song
                 self.gen_result = transcribe_song(
                     self.gen_song_dir,
@@ -2539,8 +2561,11 @@ class BassKaraoke(
             overlay.fill((8, 10, 16, 225))
             self.screen.blit(overlay, (0, 0))
         if self.gen_running:
-            t = self.font_big.render("Generando partitura desde el audio…",
-                                     True, C_ACCENT)
+            t = self.font_big.render(
+                "Generando partitura desde el .sng…"
+                if getattr(self, "gen_from_sng", False)
+                else "Generando partitura desde el audio…",
+                True, C_ACCENT)
             self.screen.blit(t, t.get_rect(center=(cx, H // 2 - 70)))
             sub = self.font_med.render(self.song_name, True, C_GRAY)
             self.screen.blit(sub, sub.get_rect(center=(cx, H // 2 - 30)))
@@ -2584,10 +2609,14 @@ class BassKaraoke(
             self.screen.blit(bg, box.topleft)
             pygame.draw.rect(self.screen, (235, 200, 90), box, 2,
                              border_radius=8)
-            msg = self.font_med.render(
-                f"Canción sin partitura — F7 generar ({self.gen_barlen}/4) · "
-                f"F8 cambiar compás",
-                True, (255, 240, 180))
+            song = (self.songs[self.song_idx]
+                    if 0 <= self.song_idx < len(self.songs) else {})
+            if song.get("sng"):
+                notice = "Canción .sng sin convertir — F7 genera la partitura"
+            else:
+                notice = (f"Canción sin partitura — F7 generar ({self.gen_barlen}/4) · "
+                          f"F8 cambiar compás")
+            msg = self.font_med.render(notice, True, (255, 240, 180))
             self.screen.blit(msg, msg.get_rect(center=box.center))
 
     def _draw_align_editor(self):

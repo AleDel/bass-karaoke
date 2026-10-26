@@ -8,6 +8,8 @@ JJSwing (patrones reales + fallback de arpegio).
 Este módulo replica el criterio de ese motor para producir material de
 práctica:
 
+- ``yjz``       (por defecto) frases reales del ritmo *jjSwing* (``psBase.yjz``)
+               con la variación de cada parte; sin JJazzLab cae a ``jjazz``.
 - ``walking``  negras caminantes: raíz → 3ª → 5ª → aproximación a la
                fundamental del acorde siguiente (estilo walking bass).
 - ``jjazz``    fallback exacto de JJSwing: raíz + 3ª + 5ª repartidos según
@@ -15,7 +17,8 @@ práctica:
 - ``two_feel`` raíz en los tiempos 1 y 3.
 
 La salida es el formato que ya consume la app: ``<nombre>.musicxml`` (con
-tablatura y armonía) + ``<nombre>.chords.json``.
+tablatura y armonía) + ``<nombre>.chords.json``. La app también puede generar
+la partitura desde el propio ``.sng`` (tecla ``F7``) si está en ``songs/``.
 """
 from __future__ import annotations
 

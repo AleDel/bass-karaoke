@@ -367,7 +367,7 @@ def draw_song_menu(app) -> None:
     if not app.songs:
         app.screen.blit(
             app.font_med.render(
-                "No se encontraron canciones en songs/ (se necesita .musicxml o audio)",
+                "No se encontraron canciones en songs/ (se necesita .musicxml, .sng o audio)",
                 True, C_RED),
             (mx + 20, my + 80))
     else:
@@ -388,7 +388,8 @@ def draw_song_menu(app) -> None:
             has  = "●" if s.get("audio") else "○"
             txt  = f"{has} {s['name']}"
             if s.get("audio_only"):
-                txt += "   (sin partitura · F7)"
+                txt += ("   (sng · F7)" if s.get("sng")
+                        else "   (sin partitura · F7)")
             elif not s.get("audio"):
                 txt += "   (sin audio)"
             lbl = app.font_small.render(txt, True, col)
@@ -518,7 +519,7 @@ def draw_help(app) -> None:
         ]),
         ("Vista", [
             ("L", "Selector de canciones"),
-            ("F7", "Generar partitura desde el audio (si falta)"),
+            ("F7", "Generar partitura (desde el audio o el .sng de la canción)"),
             ("S", "Partitura Verovio ↔ Music21"),
             ("B", "Tempo en BPM ↔ figura"),
             ("H", "Mapa del mástil"),
