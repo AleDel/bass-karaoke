@@ -33,3 +33,6 @@ dist/
 
 # Aubio (librería externa, no parte del proyecto)
 aubio/
+
+# Motor de JJazzLab descargado bajo demanda (LGPL: no redistribuir)
+vendor/

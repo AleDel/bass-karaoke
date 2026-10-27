@@ -205,3 +205,21 @@ def test_render_midi_scales_with_ratio(tmp_path):
     fast = band.render_midi(path, 0.5)
     slow = band.render_midi(path, 1.0)
     assert len(fast) > len(slow) * 1.8
+
+
+@pytest.mark.skipif(not band.midi_available(), reason="sin SoundFont")
+def test_render_midi_channel_filters(tmp_path):
+    """El bajo se puede aislar del resto de pistas del MIDI de JJazzLab."""
+    path = _write_midi(str(tmp_path / "d.mid"))
+    only_bass = band.render_midi(path, only_channels={0})
+    no_bass = band.render_midi(path, exclude_channels={0})
+    assert only_bass is not None and no_bass is not None
+    assert float(np.abs(only_bass).max()) > 0.05
+    assert float(np.abs(no_bass).max()) > 0.05
+    # el bajo suena en 0..0.75 s; la batería entra después: cada filtro deja
+    # la otra mitad en silencio (separación real de pistas)
+    head = int(0.7 * 44100)
+    assert float(np.abs(only_bass[:head]).max()) > 0.05
+    assert float(np.abs(no_bass[:head]).max()) < 0.01
+    # sin ningún canal no hay nada que renderizar
+    assert band.render_midi(path, only_channels={7}) is None

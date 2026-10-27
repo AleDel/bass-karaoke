@@ -611,9 +611,38 @@ def _add_rehearsals(tree, song: dict):
         meas.insert(pos, direction)
 
 
+def _notes_from_jjazz(song: dict, sng_path: str, mid_path: str):
+    """Línea de bajo tal cual la genera JJazzLab (MIDI real).
+
+    Devuelve ``(notes16, track)`` o ``(None, None)`` si no hay motor o el
+    MIDI no trae pista de bajo.
+    """
+    from . import jjazz
+
+    if not jjazz.available():
+        return None, None
+    if not jjazz.sng_to_midi(sng_path, mid_path):
+        return None, None
+    track = jjazz.bass_track(mid_path)
+    if not track or not track["notes"]:
+        try:
+            os.remove(mid_path)
+        except OSError:
+            pass
+        return None, None
+    total_beats = float(song["total_bars"] * song["beats_per_bar"])
+    notes = _to_sixteenths(track["notes"], total_beats)
+    return (notes or None), track
+
+
 def build_song(sng_path: str, out_dir: str | None = None, style: str = "yjz",
-               force: bool = False) -> dict:
-    """Escribe ``<nombre>.musicxml`` + ``<nombre>.chords.json`` de un ``.sng``."""
+               force: bool = False, engine: str = "auto") -> dict:
+    """Escribe ``<nombre>.musicxml`` + ``<nombre>.chords.json`` de un ``.sng``.
+
+    ``engine='auto'`` (por defecto) pide el MIDI al motor de JJazzLab; si no
+    está disponible cae al generador interno (``style``). Con ``'internal'``
+    se usa siempre el generador interno.
+    """
     song = parse_sng(sng_path)
     name = song["name"]
     target_dir = out_dir or os.path.join(SONGS_DIR, name)
@@ -623,7 +652,16 @@ def build_song(sng_path: str, out_dir: str | None = None, style: str = "yjz",
         raise FileExistsError(f"ya existe {xml_path} (usa force=True)")
     os.makedirs(target_dir, exist_ok=True)
 
-    notes = generate_line(song, style=style)
+    notes, used = None, style
+    mid_path = os.path.join(target_dir, name + ".mid")
+    if engine == "auto" and style in ("yjz", "jjazz"):
+        notes, track = _notes_from_jjazz(song, sng_path, mid_path)
+        if notes:
+            used = "jjazzlab"
+            from . import jjazz
+            jjazz.write_marker(target_dir, name, mid_path, track)
+    if not notes:
+        notes = generate_line(song, style=style)
     if not notes:
         raise ValueError(f"{name}: el cifrado no produjo notas")
 
@@ -653,7 +691,8 @@ def build_song(sng_path: str, out_dir: str | None = None, style: str = "yjz",
     save_song_map(json_path, chords_es, [], barlen=barlen)
 
     return {"song": song, "notes": notes, "musicxml": xml_path,
-            "chords_json": json_path, "style": style}
+            "chords_json": json_path, "style": style, "engine": used,
+            "mid": mid_path if used == "jjazzlab" else None}
 
 
 # ── Utilidades de inspección ────────────────────────────────────────────────
@@ -687,12 +726,17 @@ def describe(song: dict, notes) -> str:
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     style, out_dir, show, force = "yjz", None, False, False
+    engine = "auto"
     files = []
     i = 0
     while i < len(argv):
         arg = argv[i]
         if arg == "--style" and i + 1 < len(argv):
             style = argv[i + 1]
+            i += 2
+            continue
+        if arg == "--engine" and i + 1 < len(argv):
+            engine = argv[i + 1]
             i += 2
             continue
         if arg == "--out" and i + 1 < len(argv):
@@ -711,27 +755,34 @@ def main(argv=None) -> int:
         i += 1
     if not files:
         print("uso: python -m bass_karaoke.sng FICHERO.sng [...] "
-              "[--style yjz|walking|jjazz|two_feel] [--out DIR] [--print] [--force]",
+              "[--engine auto|internal] [--style yjz|walking|jjazz|two_feel] "
+              "[--out DIR] [--print] [--force]",
               file=sys.stderr)
         return 2
     if style not in ("yjz", "walking", "jjazz", "two_feel"):
         print(f"estilo desconocido: {style}", file=sys.stderr)
         return 2
+    if engine not in ("auto", "internal"):
+        print(f"motor desconocido: {engine}", file=sys.stderr)
+        return 2
 
     for path in files:
         try:
-            result = build_song(path, out_dir=out_dir, style=style, force=force)
+            result = build_song(path, out_dir=out_dir, style=style,
+                                force=force, engine=engine)
         except (FileExistsError, ValueError) as exc:
             print(f"[ERROR] {path}: {exc}", file=sys.stderr)
             return 1
         song = result["song"]
         print(f"[OK] {song['name']}: {song['total_bars']} compases, "
               f"{song['tempo']} BPM, {len(result['notes'])} notas, "
-              f"{style}")
+              f"{result.get('engine', style)}")
         for warning in song["warnings"]:
             print(f"     aviso: {warning}")
         print(f"     {result['musicxml']}")
         print(f"     {result['chords_json']}")
+        if result.get("mid"):
+            print(f"     {result['mid']}")
         if show:
             print(describe(song, result["notes"]))
     return 0

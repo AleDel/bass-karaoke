@@ -317,6 +317,7 @@ class BassKaraoke(
         self.muted_click  = False
         self._bass_audio  = None   # np.float32 (frames,2) pre-renderizado
         self._bass_key    = None   # clave de caché (canción + anclas + tempo)
+        self.bass_midi    = None   # marcador .jjazz.json (MIDI del motor real)
         self._bass_sound  = None   # pygame.Sound actual
         self._bass_pending = None  # Sound preparado, aún sin arrancar
         self._bass_ch     = None   # pygame.Channel de la pista de bajo
@@ -640,6 +641,7 @@ class BassKaraoke(
                 "mid":        (self._find_file(folder, ".mid")
                                or self._find_file(folder, ".midi")),
                 "sng":        sng,
+                "jjazz":      self._find_file(folder, ".jjazz.json"),
                 "audio":      audio,
                 "audio_only": musicxml is None,
             })
@@ -673,6 +675,16 @@ class BassKaraoke(
         self.musicxml_path = song["musicxml"] or ""
         self.tg_path       = song["tg"] or TG_PATH
         self.mid_path      = song.get("mid") or ""
+        self.bass_midi     = None
+        marker = song.get("jjazz")
+        if marker:
+            from . import jjazz as _jjazz
+            data = _jjazz.read_marker(marker)
+            if data and data.get("midi"):
+                mid = os.path.join(song["dir"], data["midi"])
+                if os.path.isfile(mid):
+                    self.mid_path = mid
+                    self.bass_midi = data
         self.gen_notice    = bool(song.get("audio_only"))
         if self.musicxml_path:
             self._load_notes()
@@ -852,7 +864,11 @@ class BassKaraoke(
         def worker():
             try:
                 if sng:
+                    from . import jjazz as _jjazz
                     from .sng import build_song
+                    self.gen_msg = ("Generando con el motor de JJazzLab…"
+                                    if _jjazz.available()
+                                    else "Generando la línea de bajo…")
                     res = build_song(sng, out_dir=song["dir"])
                     self.gen_result = {
                         "notes": len(res["notes"]),
@@ -1954,6 +1970,11 @@ class BassKaraoke(
     def _bass_audio_for(self, ratio=1.0):
         """Audio pre-renderizado de la línea de bajo (cacheado por canción,
         anclas y tempo). ``ratio`` < 1 alarga las notas para el varispeed."""
+        marker = getattr(self, "bass_midi", None)
+        if marker and self.mid_path and os.path.isfile(self.mid_path):
+            audio = self._bass_audio_from_midi(ratio, marker)
+            if audio is not None:
+                return audio
         notes = self.notes
         if not notes:
             return None
@@ -1988,6 +2009,40 @@ class BassKaraoke(
         self._bass_audio, self._bass_key = audio, key
         log.info(f"[Mixer] bajo pre-renderizado: {len(audio) / SAMPLERATE:.1f}s "
                  f"en {self._bass_render_s * 1000:.0f} ms  ({bass_backend()})")
+        return audio
+
+    def _bass_audio_from_midi(self, ratio, marker):
+        """Bajo renderizado desde el canal de bajo del MIDI de JJazzLab.
+
+        Así suenan el swing, el microtiming y las velocidades reales del
+        motor, sin re-cuantizar a 16avos. Devuelve ``None`` para que se use
+        el render interno si no hay SoundFont o falla el MIDI.
+        """
+        try:
+            channel = int(marker.get("bass_channel"))
+        except (TypeError, ValueError):
+            return None
+        try:
+            mtime = round(os.path.getmtime(self.mid_path), 3)
+        except OSError:
+            return None
+        try:
+            key = (self.song_name, self.mid_path, mtime,
+                   round(float(ratio), 4), channel)
+        except (TypeError, ValueError):
+            key = (self.song_name, self.mid_path, mtime, channel)
+        if self._bass_audio is not None and self._bass_key == key:
+            return self._bass_audio
+        t_start = time.perf_counter()
+        audio = render_band_midi(self.mid_path, ratio,
+                                 only_channels={channel})
+        if audio is None:
+            return None
+        self._bass_render_s = time.perf_counter() - t_start
+        self._bass_audio, self._bass_key = audio, key
+        log.info(f"[Mixer] bajo JJazzLab (canal {channel}): "
+                 f"{len(audio) / SAMPLERATE:.1f}s en "
+                 f"{self._bass_render_s * 1000:.0f} ms")
         return audio
 
     def _prefetch_band(self):
@@ -2026,6 +2081,7 @@ class BassKaraoke(
                    self.mid_path,
                    round(os.path.getmtime(self.mid_path), 3)
                    if self.mid_path and os.path.isfile(self.mid_path) else 0,
+                   (self.bass_midi or {}).get("bass_channel"),
                    tuple((round(float(s), 3), str(n)) for s, n in self.chord_events),
                    round(float(ratio), 4),
                    round(self.mp3_offset_sec, 4),
@@ -2047,11 +2103,20 @@ class BassKaraoke(
         try:
             audio = None
             if self.mid_path and band_midi_available():
-                audio = render_band_midi(self.mid_path, ratio)
+                exclude = None
+                marker = getattr(self, "bass_midi", None)
+                if marker:
+                    try:
+                        exclude = {int(marker.get("bass_channel"))}
+                    except (TypeError, ValueError):
+                        exclude = None
+                audio = render_band_midi(self.mid_path, ratio,
+                                         exclude_channels=exclude)
                 self._band_render_s = time.perf_counter() - t_start
                 if audio is not None:
                     self._band_audio, self._band_key = audio, key
                     log.info(f"[Band] MIDI externo {os.path.basename(self.mid_path)}"
+                             f"{' (sin bajo)' if exclude else ''}"
                              f": {len(audio) / SAMPLERATE:.1f}s en "
                              f"{self._band_render_s * 1000:.0f} ms")
                     return audio

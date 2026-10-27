@@ -569,8 +569,13 @@ def _midi_channels(path):
 
 
 def render_midi(path: str, ratio: float = 1.0, total_sec=None,
-                sr: int = SAMPLERATE):
-    """Renderiza un ``.mid`` completo con el SoundFont (frames, 2) float32."""
+                sr: int = SAMPLERATE, only_channels=None,
+                exclude_channels=None):
+    """Renderiza un ``.mid`` completo con el SoundFont (frames, 2) float32.
+
+    ``only_channels`` / ``exclude_channels`` permiten separar el bajo de la
+    banda cuando el MIDI lo genera JJazzLab (una pista por instrumento).
+    """
     if not path or not os.path.isfile(path) or not midi_available():
         return None
     try:
@@ -578,6 +583,12 @@ def render_midi(path: str, ratio: float = 1.0, total_sec=None,
     except Exception as exc:
         log.warning(f"[Banda] no puedo leer el MIDI {path}: {exc}")
         return None
+    if only_channels is not None:
+        keep = set(int(c) for c in only_channels)
+        chans = {ch: info for ch, info in chans.items() if ch in keep}
+    elif exclude_channels:
+        drop = set(int(c) for c in exclude_channels)
+        chans = {ch: info for ch, info in chans.items() if ch not in drop}
     if not chans:
         return None
     inv = 1.0 if abs(float(ratio) - 1.0) < 1e-6 else 1.0 / max(0.1, float(ratio))

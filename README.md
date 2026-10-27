@@ -36,10 +36,12 @@ y temas de jazz generados desde JJazzLab (*26-2*, *502 Blues*, *A Foggy Day*, *S
   sus canales) como banda en lugar de generarla.
 - **Canciones desde JJazzLab** (`python -m bass_karaoke.sng <canción>.sng`, o
   directamente `F7` sobre un `.sng` en `songs/`): genera `<canción>.musicxml` +
-  `<canción>.chords.json`. La línea de bajo usa las frases reales del ritmo
-  *jjSwing* (`Bass` de `psBase.yjz`), con la variación de cada parte
-  (`rpVariationID`: Main A-1/B-1/C-1/D-1) y transporte por raíz; sin JJazzLab
-  cae al generador `jjazz` interno.
+  `<canción>.chords.json`. Por defecto la línea de bajo la genera **el propio
+  motor de JJazzLab** (JJazzLab Toolkit, el núcleo de la app sin interfaz): el
+  `.sng` se convierte a MIDI con el mismo exportador y el bajo suena con su
+  swing, microtiming y velocidades reales. Sin Java 25 o sin el toolkit cae al
+  generador interno `yjz` (frases reales del ritmo *jjSwing*, variación de cada
+  parte —`rpVariationID`: Main A-1/B-1/C-1/D-1— y transporte por raíz).
 - **Standalone** de un solo archivo (`dist/BassKaraoke.exe`) que instala
   funcionalidades opcionales desde el propio menú `I`.
 
@@ -53,6 +55,12 @@ y temas de jazz generados desde JJazzLab (*26-2*, *502 Blues*, *A Foggy Day*, *S
 - Opcional: **JJazzLab 5.x** instalado (banda con sus patrones y su SoundFont) y
   `tinysoundfont` (funcionalidad *Bass SoundFont* del menú `I`). Sin ellos la app
   funciona, pero el bajo y la banda suenan con síntesis interna.
+- Opcional: **Java 25** para generar el MIDI de un `.sng` con el motor real de
+  JJazzLab. Sirve el JRE que instala JJazzLab (`C:\Program Files\JJazzLab\jdk`)
+  o cualquier JDK 25 en `JAVA_HOME`/`PATH` (variable `JJAZZLAB_JAVA` para
+  indicar uno concreto). La primera vez se descarga
+  `vendor/jjazzlab-toolkit-5.2.1.jar` (21 MB, Maven Central); no se versiona
+  porque es LGPL. Sin Java 25 se usa el generador interno.
 
 ---
 
@@ -125,7 +133,18 @@ El MusicXML puede ser:
 
 Copia el `.sng` a `songs/<nombre>/` y aparecerá en el selector (`L`) como
 pendiente de generar: pulsa **`F7`** y la app escribe ahí mismo
-`<nombre>.musicxml` + `<nombre>.chords.json` (sin salir de la app).
+`<nombre>.musicxml` + `<nombre>.chords.json` (sin salir de la app). Si el motor
+de JJazzLab está disponible escribe además:
+
+- `<nombre>.mid`: el MIDI completo tal cual lo exporta JJazzLab (batería, bajo,
+  acordes…), sin click ni precount.
+- `<nombre>.jjazz.json`: marcador con el canal y la pista de bajo. Con él la app
+  sabe que el `.mid` viene del motor real, suena el bajo desde su propio canal
+  (swing y microtiming exactos) y renderiza la banda con el resto de canales,
+  sin duplicar el bajo.
+
+La tablatura y la partitura siguen cuantizadas a 16avos (el modelo de la app es
+una rejilla entera); solo el audio del bajo conserva el tiempo real.
 
 También se puede hacer desde la terminal, por ejemplo en lote:
 
@@ -133,13 +152,15 @@ También se puede hacer desde la terminal, por ejemplo en lote:
 python -m bass_karaoke.sng JJazzLab-Jazz-1460\*.sng
 ```
 
+- `--engine auto` (por defecto): pide el MIDI al motor de JJazzLab; si no está
+  disponible usa el generador interno. `--engine internal` fuerza el interno.
 - `--style yjz` (por defecto): línea de bajo con las frases reales del ritmo
-  *jjSwing*; `walking`, `jjazz` y `two_feel` son los generadores internos
-  alternativos.
+  *jjSwing* cuando se usa el generador interno; `walking`, `jjazz` y `two_feel`
+  son los generadores internos alternativos.
 - `--print` muestra el cifrado y la línea generada; `--force` sobrescribe.
-- Escribe `<nombre>.musicxml` + `<nombre>.chords.json`. La banda usa los
-  patrones y el SoundFont de JJazzLab si está instalado (se leen de su
-  instalación, no se redistribuyen).
+- Escribe `<nombre>.musicxml` + `<nombre>.chords.json` (y `.mid`/`.jjazz.json`
+  con el motor real). La banda usa los patrones y el SoundFont de JJazzLab si
+  está instalado (se leen de su instalación, no se redistribuyen).
 
 ### Tempo de la canción
 
