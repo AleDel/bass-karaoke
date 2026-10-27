@@ -654,6 +654,10 @@ def build_song(sng_path: str, out_dir: str | None = None, style: str = "yjz",
 
     notes, used = None, style
     mid_path = os.path.join(target_dir, name + ".mid")
+    marker_path = os.path.join(target_dir, name + ".jjazz.json")
+    if os.path.exists(mid_path) and not os.path.exists(marker_path):
+        # No pisar un MIDI ajeno (sin marcador): el del motor va aparte.
+        mid_path = os.path.join(target_dir, name + ".jjazz.mid")
     if engine == "auto" and style in ("yjz", "jjazz"):
         notes, track = _notes_from_jjazz(song, sng_path, mid_path)
         if notes:

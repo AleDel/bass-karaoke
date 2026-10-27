@@ -137,7 +137,8 @@ pendiente de generar: pulsa **`F7`** y la app escribe ahí mismo
 de JJazzLab está disponible escribe además:
 
 - `<nombre>.mid`: el MIDI completo tal cual lo exporta JJazzLab (batería, bajo,
-  acordes…), sin click ni precount.
+  acordes…), sin click ni precount. Si ya existía un `<nombre>.mid` que no
+  generó la app, se escribe `<nombre>.jjazz.mid` para no pisarlo.
 - `<nombre>.jjazz.json`: marcador con el canal y la pista de bajo. Con él la app
   sabe que el `.mid` viene del motor real, suena el bajo desde su propio canal
   (swing y microtiming exactos) y renderiza la banda con el resto de canales,

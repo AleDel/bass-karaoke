@@ -135,6 +135,28 @@ def test_build_song_auto_uses_jjazz_midi(monkeypatch, tmp_path):
 
 
 @pytest.mark.skipif(not _SNG_FILES, reason="sin ficheros .sng de JJazzLab")
+def test_build_song_auto_keeps_foreign_midi(monkeypatch, tmp_path):
+    """Un `<nombre>.mid` que no generó la app no se sobrescribe."""
+    import shutil
+
+    from bass_karaoke import jjazz
+
+    src = _write_bass_midi(str(tmp_path / "src.mid"))
+    name = sng.parse_sng(str(_SNG_FILES[0]))["name"]
+    foreign = tmp_path / (name + ".mid")
+    foreign.write_bytes(b"MIDI ajeno")
+    monkeypatch.setattr(jjazz, "available", lambda: True)
+    monkeypatch.setattr(jjazz, "sng_to_midi",
+                        lambda _sng, mid: (shutil.copy(src, mid), True)[1])
+
+    res = sng.build_song(str(_SNG_FILES[0]), out_dir=str(tmp_path), force=True)
+
+    assert res["engine"] == "jjazzlab"
+    assert Path(res["mid"]).name == name + ".jjazz.mid"
+    assert foreign.read_bytes() == b"MIDI ajeno"
+
+
+@pytest.mark.skipif(not _SNG_FILES, reason="sin ficheros .sng de JJazzLab")
 def test_build_song_auto_falls_back_without_engine(monkeypatch, tmp_path):
     from bass_karaoke import jjazz
 
