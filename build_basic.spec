@@ -43,6 +43,8 @@ hiddenimports = [
     "bass_karaoke.app",
     "bass_karaoke.config",
     "bass_karaoke.parser",
+    "bass_karaoke.sng",
+    "bass_karaoke.jjazz",
     "bass_karaoke.utils",
     "bass_karaoke.features",
     "bass_karaoke.audio",
@@ -137,6 +139,12 @@ for _d in ("assets",):
     _p = os.path.join(ROOT, _d)
     if os.path.isdir(_p):
         datas.append((_p, _d))
+
+# Puente Java con el motor real de JJazzLab (.sng -> MIDI). El toolkit de 21 MB
+# no se empaqueta: se descarga bajo demanda junto al .exe (vendor/).
+_jbridge = os.path.join(ROOT, "bass_karaoke", "jjazz")
+if os.path.isdir(_jbridge):
+    datas.append((_jbridge, os.path.join("bass_karaoke", "jjazz")))
 
 a = Analysis(
     [os.path.join(ROOT, "launcher.py")],

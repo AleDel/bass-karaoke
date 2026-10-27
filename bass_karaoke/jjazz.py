@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -35,8 +36,10 @@ TOOLKIT_URL = (
 )
 MIN_JAVA = 25
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = (Path(sys.executable).parent if getattr(sys, "frozen", False)
+         else Path(__file__).resolve().parents[1])
 _BRIDGE = Path(__file__).resolve().parent / "jjazz" / "jjazz-bridge.jar"
+_VENDOR = _ROOT / "vendor"
 
 _java: str | None | bool = False       # False = aún sin buscar
 _toolkit: str | None | bool = False
@@ -101,7 +104,7 @@ def toolkit_jar(download: bool = True) -> str | None:
     if env and os.path.isfile(env):
         _toolkit = env
         return env
-    local = _ROOT / "vendor" / f"jjazzlab-toolkit-{TOOLKIT_VERSION}.jar"
+    local = _VENDOR / f"jjazzlab-toolkit-{TOOLKIT_VERSION}.jar"
     if local.is_file():
         _toolkit = str(local)
         return _toolkit
