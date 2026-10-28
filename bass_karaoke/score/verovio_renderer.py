@@ -40,6 +40,28 @@ except ImportError:
     log.warning("[WARN] cairosvg no encontrado — pip install cairosvg")
 
 
+def _strip_doctype(xml_str: str) -> str:
+    """Quita la declaración ``<!DOCTYPE ...>``, con o sin subconjunto interno.
+
+    Recorrido lineal contando corchetes en lugar de una regex con retroceso
+    superlineal (Sonar python:S8786). Devuelve el texto intacto si no hay
+    DOCTYPE o si no se cierra.
+    """
+    start = xml_str.find('<!DOCTYPE')
+    if start < 0:
+        return xml_str
+    depth = 0
+    for i in range(start, len(xml_str)):
+        ch = xml_str[i]
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+        elif ch == '>' and depth <= 0:
+            return xml_str[:start] + xml_str[i + 1:]
+    return xml_str
+
+
 def strip_tab_staff(xml_str: str) -> str:
     """Deja el MusicXML en notación estándar para Verovio.
 
@@ -50,8 +72,7 @@ def strip_tab_staff(xml_str: str) -> str:
     partitura se ve en notación estándar.
 
     Sin este fallback un archivo tab-only quedaba vacío (0 notas)."""
-    import re as _re
-    xml_clean = _re.sub(r'<!DOCTYPE[^[>]*(?:\[[^\]]*\])?[^>]*>', '', xml_str)
+    xml_clean = _strip_doctype(xml_str)
     try:
         root = ET.fromstring(xml_clean)
     except ET.ParseError:
@@ -268,9 +289,9 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
         # pentagrama (no en la tinta total) para no dejar margen abajo.
         _alp = pygame.surfarray.pixels_alpha(big)
         _any = (_alp > 20).max(axis=0)
-        _rows = _np.where(_any)[0]
+        _rows = _np.nonzero(_any)[0]
         _frac = (_alp > 20).mean(axis=0)
-        _staff = _np.where(_frac > 0.25)[0]   # líneas del pentagrama: densas
+        _staff = _np.nonzero(_frac > 0.25)[0]   # líneas del pentagrama: densas
         del _alp
         if len(_rows):
             pad = 10

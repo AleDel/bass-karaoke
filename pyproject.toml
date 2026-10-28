@@ -19,7 +19,17 @@ dependencies = [
 pitch = ["PyAudio>=0.2.14", "aubio>=0.4.9"]
 stretch = ["librosa>=0.11.0", "sounddevice>=0.5.2"]
 score = ["verovio>=6.1.0", "CairoSVG>=2.9.0"]
-dev = ["ruff>=0.17.1", "pytest>=9.1.1"]
+dev = [
+    "ruff>=0.17.1",
+    "pytest>=9.1.1",
+    # Analisis de calidad (docs/CALIDAD.md)
+    "pytest-cov>=7.1.0",
+    "bandit>=1.9.0",
+    "vulture>=2.16",
+    "radon>=6.0.1",
+    "pip-audit>=2.9.0",
+    "semgrep>=1.182.0",
+]
 
 [project.scripts]
 bass-karaoke = "bass_karaoke.main:main"

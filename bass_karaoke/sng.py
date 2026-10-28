@@ -95,7 +95,7 @@ _QUALITIES = {
 }
 
 _SEMITONES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
-_CHORD_RE = re.compile(r"([A-G])([#b]*)(.*)")
+_CHORD_RE = re.compile(r"([A-G])([#b]{0,2})(.*)")
 _BASS_RE = re.compile(r"([A-G])([#b]*)")
 
 # Registro de trabajo: E1..A2 (el bajo de 4 cuerdas, como InstrumentFamily.Bass

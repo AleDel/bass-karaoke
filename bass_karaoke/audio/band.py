@@ -56,7 +56,7 @@ VEL_BOOST = {27: 15, 28: 15, 42: 40, 44: 40, 46: 40, 49: 30, 51: 40, 53: 30}
 _ES_ROOTS = ("Sol", "Do", "Re", "Mi", "Fa", "La", "Si")
 _ES_PC = {"Do": 0, "Re": 2, "Mi": 4, "Fa": 5, "Sol": 7, "La": 9, "Si": 11}
 _EN_PC = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
-_YJZ_TRACK_RE = re.compile(r"(.+?)-\[([^,]+),([^,]+),ch(\d+)\]")
+_YJZ_TRACK_RE = re.compile(r"([^[]+)-\[([^,]+),([^,]+),ch(\d+)\]")
 
 _CACHE = {}
 
@@ -630,8 +630,10 @@ def render_midi(path: str, ratio: float = 1.0, total_sec=None,
 def _scaled_events(chords, bpm: float, barlen: float, total_sec: float,
                    ratio: float):
     """Eventos de la banda con el tempo efectivo ``bpm*ratio`` (varispeed)."""
-    inv = 1.0 if abs(float(ratio) - 1.0) < 1e-6 else 1.0 / max(0.1, float(ratio))
-    if inv != 1.0:
+    r = float(ratio)
+    varispeed = abs(r - 1.0) >= 1e-6
+    inv = 1.0 / max(0.1, r) if varispeed else 1.0
+    if varispeed:
         chords = [(float(s) * inv, n) for s, n in chords]
     return build_events(chords, float(bpm) / inv, barlen, float(total_sec) * inv)
 

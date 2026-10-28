@@ -84,7 +84,6 @@ public final class JjazzExport
         } catch (Throwable t)
         {
             LOGGER.log(Level.SEVERE, "error exportando " + sngFile, t);
-            t.printStackTrace();
             System.exit(70);
         }
     }

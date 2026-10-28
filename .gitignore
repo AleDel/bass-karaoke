@@ -36,3 +36,9 @@ aubio/
 
 # Motor de JJazzLab descargado bajo demanda (LGPL: no redistribuir)
 vendor/
+
+# Analisis de calidad (SonarQube / cobertura)
+coverage.xml
+.coverage
+.scannerwork/
+

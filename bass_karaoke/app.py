@@ -1412,7 +1412,9 @@ class BassKaraoke(
                 merged.append((s16, qpm, unit))
         if not merged:
             return [(0.0, 60.0, "quarter")]
-        if merged[0][0] != 0.0:
+        # Las posiciones s16 son >= 0: si el mapa no arranca en cero, se antepone
+        # una entrada en 0. Comparar con > evita la igualdad de floats (S1244).
+        if merged[0][0] > 0.0:
             merged.insert(0, (0.0, merged[0][1], merged[0][2]))
         return merged
 
@@ -2776,7 +2778,7 @@ class BassKaraoke(
 
         active = self._align_active_marker_sec()
         for e in self.ed_tempo_map:
-            if len(e) >= 4 and e[3] is not None and float(e[3]) == 0.0:
+            if len(e) >= 4 and e[3] is not None and float(e[3]) <= 0.0:
                 continue   # el compás 1 lo representa la línea verde "inicio"
             mp3, qpm = e[0], e[1]
             x = self._align_mark_px(mp3)
@@ -2844,7 +2846,8 @@ class BassKaraoke(
         pygame.draw.line(self.screen, C_ACCENT, (0, HEADER_H), (W, HEADER_H), 2)
 
         ratio = self._speed_ratio()
-        scaled = ratio if abs(ratio - 1.0) > 1e-6 else 1.0
+        speed_scaled = abs(ratio - 1.0) > 1e-6
+        scaled = ratio if speed_scaled else 1.0
         mode_str = "BPM" if self.view.tempo_display_mode == "bpm" else "figuras"
         bpm_t = self.font_med.render(
             _fmt_tempo(self.tempo_map, scaled, self.view.tempo_display_mode),
@@ -2887,7 +2890,7 @@ class BassKaraoke(
         st_x = W - st.get_width() - 12
         self.screen.blit(st, (st_x, 36))
 
-        if scaled != 1.0:
+        if speed_scaled:
             sub_str = (f"original: {_fmt_tempo(self.tempo_map, 1.0, self.view.tempo_display_mode)}"
                        f"   x{ratio:.2f}")
         else:
