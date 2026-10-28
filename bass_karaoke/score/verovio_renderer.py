@@ -4,7 +4,10 @@ Renderizador de partitura usando Verovio + cairosvg → pygame.Surface.
 
 import logging
 import os
-import xml.etree.ElementTree as ET
+
+# defusedxml: mismo API que ElementTree, pero rechaza entidades XML.
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from ..config import MUSICXML_PATH, SCORE_H
 
@@ -72,9 +75,17 @@ def strip_tab_staff(xml_str: str) -> str:
     partitura se ve en notación estándar.
 
     Sin este fallback un archivo tab-only quedaba vacío (0 notas)."""
+    if "<!ENTITY" in xml_str.upper():
+        # Las entidades XML no se le pasan a Verovio (expansión exponencial).
+        log.warning("[Score] MusicXML con entidades XML: se ignora la partitura")
+        return ""
     xml_clean = _strip_doctype(xml_str)
     try:
         root = ET.fromstring(xml_clean)
+    except DefusedXmlException as exc:
+        # Entidades XML: no se le pasa el original a Verovio.
+        log.warning(f"[Score] MusicXML rechazado por seguridad: {exc}")
+        return ""
     except ET.ParseError:
         return xml_str
 

@@ -114,6 +114,8 @@ def toolkit_jar(download: bool = True) -> str | None:
         local.parent.mkdir(parents=True, exist_ok=True)
         log.info(f"[JJazzLab] descargando {TOOLKIT_URL} …")
         tmp = local.with_suffix(".part")
+        # Falso positivo: la URL es la constante TOOLKIT_URL, no un valor externo.
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(TOOLKIT_URL, timeout=120) as resp:
             with open(tmp, "wb") as fh:
                 shutil.copyfileobj(resp, fh)

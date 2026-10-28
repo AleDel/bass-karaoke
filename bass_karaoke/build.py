@@ -11,10 +11,13 @@ Se usa tanto desde el script reproducible de una canción como desde la app
 from __future__ import annotations
 
 import os
-import xml.etree.ElementTree as ET
+
+# ElementTree solo se usa para CONSTRUIR MusicXML; la lectura va por defusedxml.
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from collections import defaultdict
 
 import numpy as np
+from defusedxml.ElementTree import parse as _parse_xml
 
 # ── Métrica y armonía (valores por defecto; se pueden pasar por argumento) ────
 BARLEN_DEFAULT = 3          # 3/4 corridos
@@ -378,7 +381,7 @@ def load_existing_lyrics(path):
 def validate_measures(xml_path, barlen=BARLEN_DEFAULT):
     """Validador independiente: cada compás debe sumar barlen*4."""
     bar16 = barlen * 4
-    root = ET.parse(xml_path).getroot()
+    root = _parse_xml(xml_path).getroot()
     bad = []
     for part in root.iter("part"):
         for meas in part.findall("measure"):

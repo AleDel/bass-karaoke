@@ -36,7 +36,25 @@ Para regenerarlo: <http://localhost:9000/account/security> (usuario `admin`).
 .\.venv\Scripts\semgrep.exe --config p/python --config p/security-audit --metrics off bass_karaoke
 ```
 
-También está expuesto como MCP (`semgrep`), configurado en `opencode.json`.
+También está expuesto como MCP (`semgrep`), pero en el **config global** de
+opencode (`~/.config/opencode/opencode.jsonc`) junto a SonarQube y GitNexus: la
+ruta al `.venv` es específica de esta máquina y no pinta nada en el repo. El MCP
+escanea ficheros sueltos (`semgrep_scan` pide rutas absolutas); para el paquete
+entero usa el comando de arriba.
+
+### Resultado (2026-10-28)
+
+Primer análisis del paquete: **8 hallazgos → 0** (uno es falso positivo anotado).
+
+| Regla | Dónde | Decisión |
+|---|---|---|
+| `use-defused-xml` / `use-defused-xml-parse` | `parser.py`, `sng.py`, `score/verovio_renderer.py` | `defusedxml.ElementTree` (dependencia nueva): rechaza entidades y admite el `DOCTYPE` de MusicXML |
+| `use-defused-xml` / `use-defused-xml-parse` | `build.py` | `ElementTree` solo construye XML (`# nosemgrep`); la lectura de `validate_measures` va por defusedxml |
+| `dynamic-urllib-use` | `jjazz.py` | falso positivo: la URL es la constante `TOOLKIT_URL` (`# nosemgrep` con motivo) |
+
+`tests/unit/test_xml_safety.py` fija el comportamiento: un MusicXML con
+`DOCTYPE` sigue parseando, un "billion laughs" se rechaza en MusicXML, `.sng` y
+`content.xml` de los `.tg`, y Verovio no recibe partituras con entidades.
 
 ## Herramientas ligeras
 
@@ -51,8 +69,8 @@ También está expuesto como MCP (`semgrep`), configurado en `opencode.json`.
 ## Estado (2026-10-28)
 
 Puerta de calidad **OK**: 0 issues abiertos, 0 bugs, 0 vulnerabilidades, 0 code
-smells, duplicación 0.6 %, cobertura global 37.3 % y **90.5 % en código nuevo**
-(umbral 80 %). 316 tests en verde.
+smells, duplicación 0.6 %, cobertura global 37.4 % y **90.2 % en código nuevo**
+(umbral 80 %). 322 tests en verde, Semgrep sin hallazgos.
 
 La puerta exige 80 % de cobertura *sólo en código nuevo*: al tocar lógica, añade
 su test en `tests/unit/`. Para código de dibujo hay patrón sin ventana en

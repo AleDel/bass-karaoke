@@ -12,6 +12,8 @@ license = { text = "MIT" }
 dependencies = [
     "pygame==2.6.1",
     "numpy==1.26.4",
+    # Lectura de MusicXML/.sng sin entidades XML (semgrep: use-defused-xml)
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

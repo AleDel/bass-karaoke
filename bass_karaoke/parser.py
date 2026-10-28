@@ -4,7 +4,11 @@ Devuelve notas, secciones y BPM inicial.
 """
 
 import logging
-import xml.etree.ElementTree as ET
+
+# defusedxml: mismo API que ElementTree, pero rechaza entidades XML
+# (expansion exponencial / "billion laughs"). El DOCTYPE de MusicXML se
+# permite porque no se resuelven DTDs externos.
+import defusedxml.ElementTree as ET
 
 from .config import NECK_FRETS
 from .utils import fret_to_hz, hz_to_note_name

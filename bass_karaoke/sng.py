@@ -26,7 +26,11 @@ import math
 import os
 import re
 import sys
-import xml.etree.ElementTree as ET
+
+# ElementTree solo se usa para CONSTRUIR MusicXML; la lectura va por defusedxml.
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
+
+from defusedxml.ElementTree import parse as _parse_xml
 
 from .build import _add_rest, build_musicxml
 from .chords import NAMES_ES, save_song_map
@@ -149,7 +153,7 @@ def parse_sng(path: str) -> dict:
                   la estructura (las secciones repetidas se expanden),
         warnings  [str]
     """
-    root = ET.parse(path).getroot()
+    root = _parse_xml(path).getroot()
     warnings = []
     name = os.path.splitext(os.path.basename(path))[0]
     try:
