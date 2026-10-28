@@ -2227,6 +2227,12 @@ class BassKaraoke(
         self._start_bass()
         self._start_band()
         self._apply_mix()
+        # Anclar el reloj de frames al momento en que el audio ya está en
+        # marcha. Preparar el bajo/banda o abrir el MP3 puede tardar cientos
+        # de ms (el primer play tras cargar una canción); si ese tiempo se
+        # suma al siguiente dt, el playhead se adelanta y la canción suena
+        # desincronizada hasta reiniciar. Por eso pulsar R lo "arreglaba".
+        self.clock.tick()
 
     def _pause_mp3(self):
         if self._use_vsp:
