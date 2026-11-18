@@ -3,42 +3,34 @@ Motor de detección de pitch en tiempo real.
 
 La clase PitchEngine arranca un hilo de audio que captura del micrófono,
 aplica el método de pitch seleccionado y llama al callback on_update(hz, note).
+Los algoritmos concretos viven en ``detectors.py``; aquí solo quedan la
+captura, el pre-filtrado y la estabilización temporal.
 """
+
+from __future__ import annotations
 
 import logging
 import math
-import os
 import threading
 from collections import Counter, deque
 
 import numpy as np
 
 from ..config import (
-    AUBIO_FFTSIZE,
-    AUBIO_METHOD,
-    AUBIO_SILENCE_DB,
-    AUBIO_TOLERANCE,
-    BASS_MAX_HZ,
-    CHUNK_SIZE,
     HIGHPASS_HZ,
-    HOP_S,
     LOWPASS_HZ,
     MAX_HZ,
     MIN_HZ,
-    MPM_THRESHOLD,
-    MPM_WIN,
-    PESTO_ONNX_PATH,
+    PITCH_DEBUG_EVERY,
+    PITCH_FAST_VOTES,
+    PITCH_HISTORY_FRAMES,
     PITCH_HOLD_FRAMES,
+    PITCH_RMS_GATE,
     SAMPLERATE,
-    WIN_S,
 )
-from ..utils import hz_to_note_name
-
-try:
-    import aubio as _aubio_mod
-    AUBIO_OK = True
-except ImportError:
-    AUBIO_OK = False
+from ..utils import hz_to_midi, hz_to_note_name
+from .detectors import AUBIO_OK, _octave_to_bass_range, create_detector
+from .detectors import _mpm_pitch as _mpm_pitch  # re-export: lo usa transcribe.py
 
 try:
     import pyaudio as _pyaudio_mod
@@ -56,6 +48,12 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 PITCH_AVAILABLE = AUBIO_OK and PA_OK
+
+__all__ = [
+    "PitchEngine", "PitchStabilizer", "PITCH_AVAILABLE", "PA_OK",
+    "clean_device_name", "enumerate_devices", "device_name_warning",
+    "_mpm_pitch", "_octave_to_bass_range",
+]
 
 
 def clean_device_name(name):
@@ -104,94 +102,6 @@ def device_name_warning(name: str):
     if any(h in low for h in _OUTPUT_NAME_HINTS):
         return "¿salida?"
     return None
-
-
-def _octave_to_bass_range(hz: float) -> float:
-    """
-    Pliega una detección al rango fundamental del bajo de forma SEGURA:
-    solo actúa cuando el valor está claramente fuera de ese rango, así que
-    nunca altera una nota real del bajo.
-
-    - Debajo de MIN_HZ: sube una octava (detección sub-armónica).
-    - Muy por encima del rango del bajo: divide por 2 o 3 (armónico).
-    """
-    if hz <= 0:
-        return hz
-    if hz < MIN_HZ:
-        up = hz * 2.0
-        if MIN_HZ <= up <= BASS_MAX_HZ:
-            return up
-        return hz
-    if hz > BASS_MAX_HZ * 1.3:
-        for div in (2, 3):
-            root = hz / div
-            if MIN_HZ <= root <= BASS_MAX_HZ:
-                return root
-    return hz
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MPM — McLeod Pitch Method (McLeod & Wyvill 2005). Es el algoritmo estándar
-# de los afinadores monofónicos (guitarra/bajo/violín): robusto en graves y
-# frente a armónicos. Variante vectorizada con FFT del NSDF (igual que
-# TarsosDSP, pero O(N log N) en vez de O(N²)).
-# ─────────────────────────────────────────────────────────────────────────────
-def _mpm_pitch(x: np.ndarray, fs: float, f_min: float, f_max: float,
-               threshold: float = 0.8):
-    """
-    Devuelve (f0_hz, claridad). claridad = valor NSDF del pico (0-1).
-    0.0 si no hay una fundamental fiable por encima de `threshold`.
-    """
-    N = len(x)
-    xf = x.astype(np.float64)
-
-    # Autocorrelación lineal con zero-padding (evita contaminación circular).
-    X2 = np.fft.rfft(xf, n=2 * N)
-    acf = np.fft.irfft(X2 * np.conj(X2), n=2 * N)[:N]
-
-    # Divisor de TarsosDSP: Σ x[i]² + x[i+τ]² sobre i∈[0, N-τ)
-    x2 = xf * xf
-    cum = np.empty(N + 1)
-    cum[0] = 0.0
-    np.cumsum(x2, out=cum[1:])
-    tau = np.arange(N)
-    divisor = np.maximum(cum[N - tau] + (cum[N] - cum[tau]), 1e-12)
-    nsdf = 2.0 * acf / divisor
-
-    t_min = max(2, int(fs / f_max))
-    t_max = min(N - 3, int(fs / f_min))
-    if t_max <= t_min:
-        return 0.0, 0.0
-
-    seg = nsdf[t_min:t_max + 1]
-    mask = (seg[1:-1] > seg[:-2]) & (seg[1:-1] >= seg[2:]) & (seg[1:-1] > 0)
-    idxs = np.flatnonzero(mask) + 1   # índices locales (con offset 1 del borde)
-
-    # La fundamental es el PRIMER pico por encima del umbral: todo señal
-    # periódica con periodo T cumple NSDF(T)=1, así que los picos en 2T, 3T…
-    # (sub-armónicos) aparecen después y no deben ganarle.
-    for k in idxs:
-        t1 = t_min + k
-        y0, y1, y2 = nsdf[t1 - 1], nsdf[t1], nsdf[t1 + 1]
-        a  = 0.5 * (y0 - 2.0 * y1 + y2)
-        b  = 0.5 * (y2 - y0)
-        denom = 4.0 * a
-        if abs(denom) < 1e-12:
-            val, dt = y1, 0.0
-        else:
-            dt = -b / (2.0 * a)
-            val = y1 - b * b / denom
-        if val < threshold:
-            continue
-        best_tau = t1 + dt
-        best_val = val
-        break
-    else:
-        return 0.0, 0.0
-    f0 = fs / best_tau
-    if not (f_min <= f0 <= f_max):
-        return 0.0, 0.0
-    return f0, float(best_val)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -268,6 +178,79 @@ def _build_prefilter(fs: float):
     return _filt, state
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  Estabilización temporal (independiente del detector)
+# ══════════════════════════════════════════════════════════════════════════
+_SILENT = (0.0, "—", 0.0, "—")
+
+
+class PitchStabilizer:
+    """Convierte lecturas por frame en la nota suave que ve la UI.
+
+    * mediana de los últimos ``history`` frames → ``detected_hz``;
+    * fast-commit: si ``fast_votes`` de los últimos 3 frames coinciden en la
+      misma nota MIDI, esa es la nota estable (~93 ms);
+    * ``on_silence`` mantiene la última nota ``hold_frames`` antes de soltar.
+
+    No depende de audio ni de pygame: se puede probar con números.
+    """
+
+    def __init__(self, hold_frames: int = PITCH_HOLD_FRAMES,
+                 history: int = PITCH_HISTORY_FRAMES):
+        self.hold_frames = hold_frames
+        self._buf = deque(maxlen=history)
+        self._hold = 0
+
+    @property
+    def hold_count(self) -> int:
+        return self._hold
+
+    def reset(self) -> None:
+        self._buf.clear()
+        self._hold = 0
+
+    def on_silence(self):
+        """Frame por debajo del gate de RMS.
+
+        Devuelve ``(0, '—', 0, '—')`` cuando se agota el hold y ``None``
+        mientras dura (no se publica nada, igual que antes).
+        """
+        self._hold += 1
+        if self._hold >= self.hold_frames:
+            self._buf.clear()
+            return _SILENT
+        return None
+
+    def feed(self, hz: float, conf: float, conf_threshold: float):
+        """Añade una lectura y devuelve ``(det_hz, det_note, stb_hz, stb_note)``."""
+        if conf >= conf_threshold and hz > 0:
+            folded = _octave_to_bass_range(hz)
+            if MIN_HZ <= folded <= MAX_HZ:
+                self._buf.append(folded)
+                self._hold = 0
+            else:
+                self._hold += 1
+        else:
+            self._hold += 1
+
+        if self._buf and self._hold < self.hold_frames:
+            values = list(self._buf)
+            det_hz = float(np.median(values))
+            recent = values[-3:]
+            stb_hz, stb_note = 0.0, "—"
+            midi_votes = [int(round(hz_to_midi(h))) for h in recent]
+            top_midi, top_count = Counter(midi_votes).most_common(1)[0]
+            if top_count >= PITCH_FAST_VOTES:
+                matching = [h for h in recent
+                            if int(round(hz_to_midi(h))) == top_midi]
+                stb_hz = float(np.median(matching))
+                stb_note = hz_to_note_name(stb_hz)
+            return det_hz, hz_to_note_name(det_hz), stb_hz, stb_note
+
+        self._buf.clear()
+        return _SILENT
+
+
 class PitchEngine:
     """
     Hilo de captura y detección de pitch.
@@ -328,301 +311,51 @@ class PitchEngine:
         if not PA_OK:
             return
 
-        method = self.method
-
-        _torch = _tc = _pesto_model = _ort_session = _pesto_cache = None
-        _pitch_o = None
-        _rms_gate    = 0.008
-        _conf_thresh = 0.20
-        _chunk_audio = CHUNK_SIZE
-        _win         = WIN_S
-        _bp_tmppath  = None
-
-        # ── Inicializar motor ─────────────────────────────────────────────────
-        if method in ("crepe-tiny", "crepe-full"):
-            try:
-                import torch as _torch
-                import torchcrepe as _tc
-                _dev = "cuda" if _torch.cuda.is_available() else "cpu"
-                _model_size = "tiny" if method == "crepe-tiny" else "full"
-                log.info(f"[pitch] CREPE-{_model_size} ({_dev})")
-                self.on_engine_label(f"CREPE-{_model_size} ({_dev.upper()})")
-                _conf_thresh = 0.18
-            except ImportError:
-                log.info("[pitch] torchcrepe no disponible → aubio")
-                method = "aubio"
-
-        if method == "pesto":
-            try:
-                import torch as _torch
-                from pesto import load_model as _pesto_load
-                _dev = "cuda" if _torch.cuda.is_available() else "cpu"
-                _step_ms = CHUNK_SIZE / SAMPLERATE * 1000
-                log.info(f"[pitch] PESTO streaming ({_dev})  step={_step_ms:.1f}ms")
-                self.on_engine_label(f"PESTO ({_dev.upper()})")
-                _pesto_model = _pesto_load(
-                    "mir-1k_g7",
-                    step_size=_step_ms,
-                    sampling_rate=SAMPLERATE,
-                    streaming=True,
-                    max_batch_size=1,
-                ).to(_dev)
-                _pesto_model.eval()
-                _pesto_dtype = next(_pesto_model.parameters()).dtype
-                _chunk_audio = CHUNK_SIZE
-                # PESTO da confianza baja en graves (0.1-0.4) → gate permisivo
-                _conf_thresh = 0.10
-            except Exception as _e:
-                log.info(f"[pitch] PESTO no disponible ({_e}) → aubio")
-                method = "aubio"
-
-        if method == "pesto-onnx":
-            try:
-                import onnxruntime as _ort
-                if not os.path.exists(PESTO_ONNX_PATH):
-                    raise FileNotFoundError(f"Modelo ONNX no encontrado: {PESTO_ONNX_PATH}")
-                _ort_session = _ort.InferenceSession(
-                    PESTO_ONNX_PATH, providers=["CPUExecutionProvider"])
-                _cache_size  = _ort_session.get_inputs()[1].shape[1]
-                _pesto_cache = np.zeros((1, _cache_size), dtype=np.float32)
-                _chunk_audio = 512
-                # PESTO da confianza baja en graves (0.1-0.4) → gate permisivo
-                _conf_thresh = 0.10
-                _pesto_onnx_warmup = 8
-                _pesto_onnx_cnt    = 0
-                log.info(f"[pitch] PESTO-ONNX  cache={_cache_size}  chunk={_chunk_audio}")
-                self.on_engine_label("PESTO-ONNX (CPU)")
-            except Exception as _e:
-                log.info(f"[pitch] PESTO-ONNX no disponible ({_e}) → aubio")
-                method = "aubio"
-
-        if method == "aubio":
-            if AUBIO_OK:
-                _pitch_o = _aubio_mod.pitch(AUBIO_METHOD, AUBIO_FFTSIZE, HOP_S, SAMPLERATE)
-                _pitch_o.set_unit("Hz")
-                _pitch_o.set_tolerance(AUBIO_TOLERANCE)
-                _pitch_o.set_silence(AUBIO_SILENCE_DB)
-                # aubio ya devuelve pitch 0 cuando no hay nota; su confianza
-                # es poco fiable en graves → no gatear por ella.
-                _conf_thresh = 0.0
-                log.info(f"[pitch] aubio {AUBIO_METHOD}  fft={AUBIO_FFTSIZE}  "
-                      f"tol={AUBIO_TOLERANCE}  sin gate de confianza")
-                self.on_engine_label(f"aubio {AUBIO_METHOD}")
-            else:
-                log.info("[pitch] aubio no disponible — sin detección")
-                self.on_engine_label("sin pitch")
-
-        if method == "mpm":
-            # MPM no necesita init: usa mpm_buf + _mpm_pitch en el bucle.
-            # Devuelve pitch 0 cuando no hay pico sobre el umbral → gate por pitch>0.
-            _conf_thresh = 0.0
-            log.info(f"[pitch] MPM (McLeod)  win={MPM_WIN}  hop={HOP_S}")
-            self.on_engine_label("MPM McLeod")
-
-        if method == "basic-pitch":
-            try:
-                import tempfile as _tmpmod
-
-                import soundfile as _sf
-                os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
-                import pathlib as _pl
-
-                from basic_pitch.inference import Model as _BP_Model
-                from basic_pitch.inference import predict as _bp_predict
-                _bp_onnx = None
-                try:
-                    import basic_pitch as _bp_pkg
-                    _pkg_dir = _pl.Path(_bp_pkg.__file__).parent
-                    _onnx_candidate = _pkg_dir / "saved_models" / "icassp_2022" / "nmp.onnx"
-                    if _onnx_candidate.exists():
-                        _bp_onnx = str(_onnx_candidate)
-                except Exception:
-                    pass
-                if _bp_onnx:
-                    _bp_model = _BP_Model(_bp_onnx)
-                    log.info(f"[pitch] Basic Pitch ONNX  {_bp_onnx}")
-                else:
-                    from basic_pitch import ICASSP_2022_MODEL_PATH as _BP_MODEL_PATH
-                    _bp_model = _BP_Model(_BP_MODEL_PATH)
-                    log.info("[pitch] Basic Pitch (runtime por defecto)")
-                _bp_buf_sec    = 1.5
-                _bp_buf_n      = int(_bp_buf_sec * SAMPLERATE)
-                _bp_buf        = np.zeros(_bp_buf_n, dtype=np.float32)
-                _bp_hop_chunks = max(1, int(0.5 * SAMPLERATE / CHUNK_SIZE))
-                _bp_chunk_cnt  = 0
-                _bp_latest_hz  = 0.0
-                _bp_tmp        = _tmpmod.NamedTemporaryFile(suffix='.wav', delete=False)
-                _bp_tmppath    = _bp_tmp.name
-                _bp_tmp.close()
-                self.on_engine_label("Basic Pitch (ONNX)")
-            except Exception as _e:
-                log.info(f"[pitch] basic-pitch no disponible ({_e}) → aubio")
-                method = "aubio"
-
-        # ── Bucle de captura ─────────────────────────────────────────────────
-        audio_buf = np.zeros(_win, dtype=np.float32)
-        mpm_buf   = np.zeros(MPM_WIN, dtype=np.float32)
-        # Historía corta: la mediana cambia más rápido con notas rápidas.
-        # 5 frames ≈ 232 ms (antes 9 ≈ 418 ms); la nota nueva ocupa la
-        # mayoría en 3 frames ≈ 139 ms.
-        pitch_buf = deque(maxlen=5)
-        hold_count = 0
-        _debug_cnt  = 0
-        _prefilter, _pf_state = _build_prefilter(SAMPLERATE)
+        detector = create_detector(self.method, self.on_engine_label)
+        stabilizer = PitchStabilizer()
+        prefilter, _ = _build_prefilter(SAMPLERATE)
         log.info(f"[pitch] pre-filtro HP {HIGHPASS_HZ:.0f} Hz + LP {LOWPASS_HZ:.0f} Hz"
-              + ("  (scipy)" if SCIPY_OK else "  (biquads numpy)"))
+                 + ("  (scipy)" if SCIPY_OK else "  (biquads numpy)"))
 
         p = _pyaudio_mod.PyAudio()
         stream = None
+        debug_count = 0
         try:
             stream = p.open(
                 format=_pyaudio_mod.paFloat32, channels=1, rate=SAMPLERATE,
                 input=True, input_device_index=self.device_id,
-                frames_per_buffer=_chunk_audio)
+                frames_per_buffer=detector.chunk_size)
 
             while not self._stop_evt.is_set():
                 try:
-                    data    = stream.read(_chunk_audio, exception_on_overflow=False)
+                    data = stream.read(
+                        detector.chunk_size, exception_on_overflow=False)
                     samples = np.frombuffer(data, dtype=np.float32).copy()
-                    rms     = float(np.sqrt(np.mean(samples ** 2)))
+                    rms = float(np.sqrt(np.mean(samples ** 2)))
 
                     # Pre-filtrado: quita rumble/DC y armónicos altos que
                     # desvían la detección a la octava superior.
-                    samples = _prefilter(samples)
+                    samples = prefilter(samples)
                     # scipy.signal.sosfilt sube a float64 si los coeficientes
                     # son float64; aubio exige float32 y ONNX espera float.
                     samples = samples.astype(np.float32, copy=False)
 
-                    # Gate de silencio
-                    if rms < 0.008:
-                        hold_count += 1
-                        if hold_count >= PITCH_HOLD_FRAMES:
-                            pitch_buf.clear()
-                            self.on_update(0.0, "—", 0.0, "—")
+                    if rms < PITCH_RMS_GATE:
+                        values = stabilizer.on_silence()
+                        if values is not None:
+                            self.on_update(*values)
                         continue
 
-                    pitch = 0.0
-                    conf  = 0.0
+                    reading = detector.detect(samples)
+                    if reading is None:
+                        continue
 
-                    if method in ("crepe-tiny", "crepe-full"):
-                        audio_buf[:-_chunk_audio] = audio_buf[_chunk_audio:]
-                        audio_buf[-_chunk_audio:] = samples
-                        audio_t = _torch.from_numpy(audio_buf).unsqueeze(0).float()
-                        with _torch.no_grad():
-                            freq, period = _tc.predict(
-                                audio_t, SAMPLERATE,
-                                hop_length=512,
-                                fmin=32.70, fmax=MAX_HZ,
-                                model=_model_size,
-                                decoder=_tc.decode.weighted_argmax,
-                                return_periodicity=True,
-                                device=_dev,
-                                pad=True,
-                            )
-                        pitch = float(freq[0, -1].cpu())
-                        conf  = float(period[0, -1].cpu())
+                    debug_count += 1
+                    if debug_count % PITCH_DEBUG_EVERY == 0:
+                        self.on_debug(reading.hz, reading.conf, detector.name)
 
-                    elif method == "pesto":
-                        x = _torch.from_numpy(samples).unsqueeze(0).to(
-                            device=_dev, dtype=_pesto_dtype)
-                        with _torch.no_grad():
-                            f0, conf_t, amp_t = _pesto_model(
-                                x, convert_to_freq=True, return_activations=False)
-                        pitch = float(f0.flatten()[-1].cpu())
-                        conf  = float(conf_t.flatten()[-1].cpu())
-                        amp   = float(amp_t.flatten()[-1].cpu())
-                        if amp < 1e-5:
-                            conf = 0.0
-                        pitch = _octave_to_bass_range(pitch)
-
-                    elif method == "pesto-onnx":
-                        _pesto_onnx_cnt += 1
-                        outs = _ort_session.run(
-                            None,
-                            {"audio":  samples[np.newaxis, :],
-                             "cache":  _pesto_cache})
-                        pred_midi, conf_o, vol_o, _, cache_out = outs
-                        _pesto_cache = cache_out
-                        if _pesto_onnx_cnt <= _pesto_onnx_warmup:
-                            continue
-                        pitch = 440.0 * 2.0 ** ((float(pred_midi.flat[0]) - 69.0) / 12.0)
-                        conf  = float(conf_o.flat[0])
-                        amp   = float(vol_o.flat[0])
-                        if amp < 2.0:
-                            conf = 0.0
-                        pitch = _octave_to_bass_range(pitch)
-
-                    elif method == "aubio":
-                        pitch = float(_pitch_o(samples)[0])
-                        conf  = float(_pitch_o.get_confidence())
-
-                    elif method == "mpm":
-                        mpm_buf[:-_chunk_audio] = mpm_buf[_chunk_audio:]
-                        mpm_buf[-_chunk_audio:] = samples
-                        pitch, conf = _mpm_pitch(
-                            mpm_buf, SAMPLERATE, MIN_HZ, MAX_HZ, MPM_THRESHOLD)
-
-                    elif method == "basic-pitch":
-                        _bp_buf[:-_chunk_audio] = _bp_buf[_chunk_audio:]
-                        _bp_buf[-_chunk_audio:] = samples
-                        _bp_chunk_cnt += 1
-                        if _bp_chunk_cnt >= _bp_hop_chunks:
-                            _bp_chunk_cnt = 0
-                            try:
-                                _sf.write(_bp_tmppath, _bp_buf, SAMPLERATE)
-                                _, _, note_events = _bp_predict(_bp_tmppath, _bp_model)
-                                win_start = _bp_buf_sec - 0.5
-                                recent = [n for n in note_events if n[0] >= win_start]
-                                if recent:
-                                    best = max(recent, key=lambda n: n[3])
-                                    midi_n = float(best[2])
-                                    _bp_latest_hz = 440.0 * 2.0 ** ((midi_n - 69.0) / 12.0)
-                                else:
-                                    _bp_latest_hz = 0.0
-                            except Exception as _bp_e:
-                                log.info(f"[basic-pitch] {_bp_e}")
-                        pitch = _bp_latest_hz
-                        conf  = 1.0 if (MIN_HZ <= pitch <= MAX_HZ) else 0.0
-
-                    # ── Filtro y buffer ───────────────────────────────────────
-                    _debug_cnt += 1
-                    if _debug_cnt % 15 == 0:
-                        self.on_debug(pitch, conf, method)
-
-                    if conf >= _conf_thresh and pitch > 0:
-                        folded = _octave_to_bass_range(pitch)
-                        if MIN_HZ <= folded <= MAX_HZ:
-                            pitch_buf.append(folded)
-                            hold_count = 0
-                        else:
-                            hold_count += 1
-                    else:
-                        hold_count += 1
-
-                    if pitch_buf and hold_count < PITCH_HOLD_FRAMES:
-                        det_hz   = float(np.median(list(pitch_buf)))
-                        det_note = hz_to_note_name(det_hz)
-
-                        # Fast-commit: si 2 de las últimas 3 frames coinciden en la
-                        # misma nota, esa es la nota (~93 ms). No espera mayoría del
-                        # buffer completo → no se saltan notas en corridas rápidas.
-                        recent = list(pitch_buf)[-3:]
-                        stb_hz, stb_note = 0.0, "—"
-                        if recent:
-                            midi_votes = [int(round(12 * math.log2(h / 440) + 69))
-                                          for h in recent]
-                            counts = Counter(midi_votes)
-                            top_midi, top_count = counts.most_common(1)[0]
-                            if top_count >= 2:
-                                matching = [h for h in recent
-                                            if int(round(12 * math.log2(h / 440) + 69))
-                                            == top_midi]
-                                stb_hz   = float(np.median(matching))
-                                stb_note = hz_to_note_name(stb_hz)
-                        self.on_update(det_hz, det_note, stb_hz, stb_note)
-                    else:
-                        pitch_buf.clear()
-                        self.on_update(0.0, "—", 0.0, "—")
+                    self.on_update(*stabilizer.feed(
+                        reading.hz, reading.conf, detector.conf_threshold))
 
                 except Exception as _e:
                     log.info(f"[audio loop] {_e}")
@@ -634,8 +367,4 @@ class PitchEngine:
                 except Exception:
                     pass
             p.terminate()
-            if _bp_tmppath:
-                try:
-                    os.unlink(_bp_tmppath)
-                except Exception:
-                    pass
+            detector.close()

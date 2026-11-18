@@ -29,6 +29,24 @@ PITCH_HOLD_FRAMES = 8       # frames sin señal antes de resetear (≈370 ms)
 MIN_HZ            = 28.0
 MAX_HZ            = 400.0
 
+# ─── Estabilización del pitch (común a todos los detectores) ─────────────────
+PITCH_RMS_GATE       = 0.008  # por debajo de este RMS no hay señal útil
+PITCH_HISTORY_FRAMES = 5      # frames de la mediana (≈232 ms con hop de 46 ms)
+PITCH_FAST_VOTES     = 2      # votos de la misma nota en los últimos 3 frames
+PITCH_DEBUG_EVERY    = 15     # frames entre mensajes de depuración
+
+# ─── Umbrales de confianza/amplitud por detector ─────────────────────────────
+# La confianza de los modelos neuronales en graves es baja; cada motor tiene
+# su escala, así que el umbral vive junto a su detector.
+CREPE_CONF_THRESH       = 0.18
+PESTO_CONF_THRESH       = 0.10
+PESTO_AMP_GATE          = 1e-5
+PESTO_ONNX_CONF_THRESH  = 0.10
+PESTO_ONNX_AMP_GATE     = 2.0
+PESTO_ONNX_WARMUP       = 8    # frames que se descartan al arrancar el modelo
+PESTO_ONNX_CHUNK        = 512  # ~11.6 ms por chunk
+BASIC_PITCH_CONF_THRESH = 0.20
+
 # ─── Pre-filtrado del audio antes del detector ───────────────────────────────
 # El bajo es dominante en armónicos: un low-pass que corte los armónicos evita
 # que YIN/CREPE/PESTO se enclaven una octava arriba de la fundamental.
