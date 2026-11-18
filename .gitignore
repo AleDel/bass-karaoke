@@ -6,6 +6,11 @@ __pycache__/
 # Config personal del usuario (no subir)
 bass_karaoke_config.json
 
+# Copias de seguridad locales (*.bak, *.bak2, *.orig…)
+*.bak
+*.bak[0-9]*
+*.orig
+
 # Logs de ejecución
 logs/
 
