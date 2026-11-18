@@ -3,7 +3,6 @@ BassKaraoke — clase principal orquestadora.
 Importa toda la lógica desde los submódulos del paquete.
 """
 
-import json
 import logging
 import math
 import os
@@ -56,6 +55,7 @@ from .config import (
 )
 from .corridos import bajeo_matches
 from .parser import parse_grace_notes, parse_musicxml
+from .settings import Settings, read_settings, write_settings
 from .state import (
     MIXER_RENAME,
     AlignEditorState,
@@ -491,32 +491,33 @@ class BassKaraoke(
                 [int(e[0]), round(e[1], 2), (e[2] if len(e) >= 3 else "quarter")]
                 for e in self.tempo_map
             ]
-        cfg = {
-            "bpm":               self.bpm,
-            "bpm_map":           self._bpm_map,
-            "mp3_offset_sec":    self.mp3_offset_sec,
-            "mp3_offset_map":    self._offset_map,
-            "song_start_map":    self._song_start_map,
-            "tempo_maps":        self._tempo_maps,
-            "device_idx":        self.device_idx,
-            "muted":             self.muted,
-            "mix_song":          round(self.mix_song, 3),
-            "mix_bass":          round(self.mix_bass, 3),
-            "mix_band":          round(self.mix_band, 3),
-            "mix_click":         round(self.mix_click, 3),
-            "muted_bass":        self.muted_bass,
-            "muted_band":        self.muted_band,
-            "muted_click":       self.muted_click,
-            "pitch_method":      self.pitch_method,
-            "countdown_enabled": self.countdown_enabled,
-            "score_renderer":    self.score_renderer,
-            "gen_barlen":        self.gen_barlen,
-            "gen_bars_per_chord": self.gen_bars_per_chord,
-            "song":              self.song_name,
-        }
+        settings = Settings(
+            bpm=self.bpm,
+            mp3_offset_sec=self.mp3_offset_sec,
+            song=self.song_name,
+            device_idx=self.device_idx,
+            pitch_method=self.pitch_method,
+            countdown_enabled=self.countdown_enabled,
+            score_renderer=self.score_renderer,
+            gen_barlen=self.gen_barlen,
+            gen_bars_per_chord=self.gen_bars_per_chord,
+            mixer=MixerState(
+                song_vol=self.mix_song,
+                bass_vol=self.mix_bass,
+                band_vol=self.mix_band,
+                click_vol=self.mix_click,
+                song_muted=self.muted,
+                bass_muted=self.muted_bass,
+                band_muted=self.muted_band,
+                click_muted=self.muted_click,
+            ),
+            bpm_map=self._bpm_map,
+            offset_map=self._offset_map,
+            song_start_map=self._song_start_map,
+            tempo_maps=self._tempo_maps,
+        )
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2)
+            write_settings(settings, CONFIG_PATH)
             self._config_msg     = "Config guardada"
             self._config_msg_col = (50, 230, 110)
         except Exception as e:
@@ -530,49 +531,40 @@ class BassKaraoke(
         self._config_msg_timer = 0.0
         if not os.path.exists(CONFIG_PATH):
             return
-        try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                cfg = json.load(f)
-            self.bpm            = float(cfg.get("bpm",            self.bpm))
-            self.mp3_offset_sec = float(cfg.get("mp3_offset_sec", self.mp3_offset_sec))
-            self.muted          = bool( cfg.get("muted",          self.muted))
-            self.mix_song       = float(cfg.get("mix_song",       self.mix_song))
-            self.mix_bass       = float(cfg.get("mix_bass",       self.mix_bass))
-            self.mix_band       = float(cfg.get("mix_band",       self.mix_band))
-            self.mix_click      = float(cfg.get("mix_click",      self.mix_click))
-            self.muted_bass     = bool( cfg.get("muted_bass",     self.muted_bass))
-            self.muted_band     = bool( cfg.get("muted_band",     self.muted_band))
-            self.muted_click    = bool( cfg.get("muted_click",    self.muted_click))
-            for _v in ("mix_song", "mix_bass", "mix_band", "mix_click"):
-                setattr(self, _v, max(0.0, min(1.0, getattr(self, _v))))
-            saved_dev           = int(  cfg.get("device_idx",     self.device_idx))
-            if 0 <= saved_dev < len(self.audio_devices):
-                self.device_idx = saved_dev
-            saved_method = cfg.get("pitch_method", self.pitch_method)
-            if saved_method in PITCH_METHODS:
-                self.pitch_method   = saved_method
-                self.view.pitch_menu_sel = PITCH_METHODS.index(saved_method)
-            self.countdown_enabled = bool(cfg.get("countdown_enabled", self.countdown_enabled))
-            self.gen_barlen         = int(cfg.get("gen_barlen", self.gen_barlen))
-            self.gen_bars_per_chord = int(cfg.get("gen_bars_per_chord", self.gen_bars_per_chord))
-            saved_renderer = cfg.get("score_renderer", self.score_renderer)
-            if saved_renderer in ("verovio", "music21"):
-                self.score_renderer = saved_renderer
-            saved_song = cfg.get("song")
-            if saved_song and self.songs:
-                for i, s in enumerate(self.songs):
-                    if s["name"] == saved_song:
-                        self.song_idx = i
-                        break
-            self._bpm_map = cfg.get("bpm_map", {}) or {}
-            self._offset_map = cfg.get("mp3_offset_map", {}) or {}
-            self._song_start_map = cfg.get("song_start_map", {}) or {}
-            self._tempo_maps = cfg.get("tempo_maps", {}) or {}
-            log.info(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s  "
-                  f"pitch={self.pitch_method}  renderer={self.score_renderer}  "
-                  f"song={saved_song}")
-        except Exception as e:
-            log.warning(f"[Config WARN] {e}")
+        settings = read_settings(
+            CONFIG_PATH,
+            device_count=len(self.audio_devices),
+            known_songs=[s["name"] for s in self.songs],
+        )
+        self.bpm            = settings.bpm
+        self.mp3_offset_sec = settings.mp3_offset_sec
+        self.muted          = settings.mixer.song_muted
+        self.mix_song       = settings.mixer.song_vol
+        self.mix_bass       = settings.mixer.bass_vol
+        self.mix_band       = settings.mixer.band_vol
+        self.mix_click      = settings.mixer.click_vol
+        self.muted_bass     = settings.mixer.bass_muted
+        self.muted_band     = settings.mixer.band_muted
+        self.muted_click    = settings.mixer.click_muted
+        self.device_idx     = settings.device_idx
+        self.pitch_method   = settings.pitch_method
+        self.view.pitch_menu_sel = PITCH_METHODS.index(settings.pitch_method)
+        self.countdown_enabled  = settings.countdown_enabled
+        self.gen_barlen         = settings.gen_barlen
+        self.gen_bars_per_chord = settings.gen_bars_per_chord
+        self.score_renderer     = settings.score_renderer
+        if settings.song and self.songs:
+            for i, s in enumerate(self.songs):
+                if s["name"] == settings.song:
+                    self.song_idx = i
+                    break
+        self._bpm_map = settings.bpm_map
+        self._offset_map = settings.offset_map
+        self._song_start_map = settings.song_start_map
+        self._tempo_maps = settings.tempo_maps
+        log.info(f"[Config] cargada  BPM={self.bpm}  offset={self.mp3_offset_sec:+.2f}s  "
+                 f"pitch={self.pitch_method}  renderer={self.score_renderer}  "
+                 f"song={settings.song}")
 
     # ══════════════════════════════════════════════════════════════════
     #  CANCIONES / NOTAS / MP3
