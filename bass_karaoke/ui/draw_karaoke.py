@@ -158,12 +158,12 @@ def draw_chord_editor_popup(app) -> None:
     barra, encima del waveform; los rects vienen de la app para poder
     clicar en ellos.
     """
-    if not bool(getattr(app, "chord_bar_typing", False)):
+    if not app.chord_bar_state.typing:
         return
     layout = app.chord_bar_sugg_layout()
     if not layout:
         return
-    sel = int(getattr(app, "chord_bar_sugg_idx", -1))
+    sel = int(app.chord_bar_state.sugg_idx)
     for i, (name, rect) in enumerate(layout):
         is_sel = (i == sel)
         pygame.draw.rect(app.screen, (26, 26, 44) if is_sel else (14, 14, 26),
@@ -199,9 +199,10 @@ def draw_karaoke_strip(app) -> None:
     clip = pygame.Rect(0, yt0, W, th)
     app.screen.set_clip(clip)
 
-    sel     = getattr(app, "chord_bar_sel_measure", None)
-    typing  = bool(getattr(app, "chord_bar_typing", False))
-    buf     = str(getattr(app, "chord_bar_buf", "") or "")
+    bar     = app.chord_bar_state
+    sel     = bar.sel_measure
+    typing  = bool(bar.typing)
+    buf     = str(bar.buf or "")
 
     try:
         s16_now = _vis16(app, float(app._song_seconds_inverse(sec)))
@@ -361,7 +362,7 @@ def draw_karaoke_strip(app) -> None:
         app.screen.blit(lt, (lx, yi + 2))
 
     # ── Feedback de edición en la barra ─────────────────────────────
-    msg = getattr(app, "chord_bar_msg", "")
+    msg = bar.msg
     if msg:
         mt = app.font_small.render(msg, True, C_ACCENT)
         app.screen.blit(mt, (W - mt.get_width() - 10, yi + 2))
@@ -374,7 +375,7 @@ def draw_karaoke_strip(app) -> None:
             "Enter editar · Supr sin acorde · F9 deducir · Esc salir",
             True, C_GRAY)
         app.screen.blit(ht, (W - ht.get_width() - 10, yi + 4))
-    elif getattr(app, "chord_edit_dirty", False):
+    elif app.chord_edit_state.dirty:
         ht = app.font_tiny.render("● acordes sin guardar · Ctrl+S",
                                   True, C_RED)
         app.screen.blit(ht, (W - ht.get_width() - 10, yi + 4))

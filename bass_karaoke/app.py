@@ -15,7 +15,6 @@ import pygame
 from . import features
 from .chords import is_rest_chord, load_song_barlen, load_song_map, save_song_map
 from .config import (
-    BPM_DEFAULT,
     BPM_ORIGINAL,
     C_ACCENT,
     C_BG,
@@ -57,6 +56,20 @@ from .config import (
 )
 from .corridos import bajeo_matches
 from .parser import parse_grace_notes, parse_musicxml
+from .state import (
+    MIXER_RENAME,
+    AlignEditorState,
+    ChordBarState,
+    ChordEditState,
+    CountdownState,
+    GenerationState,
+    HitTimingState,
+    MixerState,
+    PitchState,
+    PlaybackState,
+    StateGroup,
+    with_state,
+)
 from .utils import fret_to_hz, hz_to_note_name, notes_match
 from .view_state import ViewState
 from .walking import beat_matches
@@ -69,11 +82,11 @@ from .audio import (
     VarispeedPlayer,
     band_available,
     band_midi_available,
-    render_band_midi,
     bass_backend,
     enumerate_devices,
     load_mp3_samples,
     render_band,
+    render_band_midi,
     render_bass,
     to_int16,
 )
@@ -206,6 +219,20 @@ def _fmt_tempo(tmap, scaled_by=1.0, mode="bpm"):
     return " → ".join(parts)
 
 
+# El estado agrupado vive en dataclasses (state.py). Los nombres antiguos
+# (app.chord_bar_buf, app.align_cursor_sec...) siguen funcionando como
+# propiedades que delegan en el grupo (app.chord_bar_state.buf, ...).
+@with_state(
+    StateGroup("chord_bar", ChordBarState, "chord_bar_"),
+    StateGroup("chord_edit", ChordEditState, "chord_edit_"),
+    StateGroup("align", AlignEditorState, "align_"),
+    StateGroup("gen", GenerationState, "gen_"),
+    StateGroup("mixer", MixerState, rename=MIXER_RENAME),
+    StateGroup("pitch", PitchState),
+    StateGroup("hit", HitTimingState),
+    StateGroup("countdown", CountdownState),
+    StateGroup("playback", PlaybackState),
+)
 class BassKaraoke(
     TrainingModeMixin,
     WalkingLabMixin,
@@ -233,18 +260,11 @@ class BassKaraoke(
         self.font_tiny  = pygame.font.SysFont("consolas", 12)
 
         # ── Estado ─────────────────────────────────────────────────────
-        self.bpm            = BPM_DEFAULT
-        self.playing        = False
-        self.muted          = False
-        self.note_idx       = 0
-        self.beat_time      = 0.0
-        self.score_ok       = 0
-        self.score_total    = 0
-        self.mp3_offset_sec = 0.0
+        self.playback_state = PlaybackState()
+        self.mixer_state = MixerState()
         # Ancla independiente: instante del MP3 donde empieza el compás 1
         # (inicio de canción). El tramo song_start..mp3_offset (silencio/lead-in)
         # se estira sin tocar el resto de la partitura.
-        self.song_start_sec = 0.0
         self._t             = 0.0   # tiempo acumulado para animaciones
 
         # ── Waveform de la vista principal (franja sincronizada) ───────
@@ -253,26 +273,17 @@ class BassKaraoke(
         self.song_total_sec  = 0.0
 
         # ── Countdown ──────────────────────────────────────────────────
-        self.counting_down     = False
-        self.countdown_beat    = 4
-        self.countdown_timer   = 0.0
-        self.countdown_enabled = True
+        self.countdown_state = CountdownState()
 
         # ── Pitch ──────────────────────────────────────────────────────
-        self.detected_hz   = 0.0
-        self.detected_note = "—"
-        self.stable_hz     = 0.0
-        self.stable_note   = "—"
-        self.note_match    = None
+        self.pitch_state = PitchState()
         self.pitch_lock    = threading.Lock()
         self._pitch_engine = None   # instancia PitchEngine
         self._pitch_last_cb = 0.0   # último on_update (para "SIN SEÑAL")
         self.pitch_engine  = "aubio"  # etiqueta para HUD
 
         # Indicador de timing
-        self.last_hit_delta16  = 0.0
-        self.last_hit_note_idx = -1
-        self.last_hit_alpha    = 0.0
+        self.hit_state = HitTimingState()
 
         # ── Dispositivos ───────────────────────────────────────────────
         self.audio_devices    = enumerate_devices()
@@ -308,13 +319,6 @@ class BassKaraoke(
             pass
 
         # ── Mixer (F2): canción / bajo / banda / metrónomo ─────────
-        self.mix_song     = 1.0    # volumen de la canción (MP3)
-        self.mix_bass     = 0.6    # volumen de la línea de bajo
-        self.mix_band     = 0.6    # volumen de la banda (batería/piano/guitarra)
-        self.mix_click    = 1.0    # volumen del metrónomo
-        self.muted_bass   = False  # self.muted = mute de la pista Canción
-        self.muted_band   = False
-        self.muted_click  = False
         self._bass_audio  = None   # np.float32 (frames,2) pre-renderizado
         self._bass_key    = None   # clave de caché (canción + anclas + tempo)
         self.bass_midi    = None   # marcador .jjazz.json (MIDI del motor real)
@@ -338,7 +342,6 @@ class BassKaraoke(
         # ── Arrastre con ratón (seek) ─────────────────────────────────
 
         # ── Guitar Hero: nota detectada por el micrófono ──────────────
-        self.detected_fret_str = None   # (fret, string) o None
 
         # ── Modo aprendizaje: nota pulsada con el ratón ──────────────
 
@@ -350,23 +353,7 @@ class BassKaraoke(
         self._init_sequences_state()
 
         # ── Editor de alineación MP3 (W) ──────────────────────────────
-        self.align_editor_open = False
-        self.align_wave        = None   # (col_min, col_max) normalizados a ±1
-        self.align_wave_n      = 0
-        self.align_total_sec   = 0.0
-        self.align_view_start  = 0.0    # ventana visible (zoom/pan), en segundos
-        self.align_view_span   = 0.0
-        self.align_cursor_sec  = 0.0
-        self.align_dragging    = False   # arrastrando el offset (inicio bajo)
-        self.align_dragging_start = False  # arrastrando el inicio de canción
-        self.align_drag_marker = None    # start16 de la marca de tempo arrastrada
-        self.align_panning     = False   # arrastrando con botón central (pan)
-        self.align_pan_start   = (0, 0)
-        self.align_pan_view_start = 0.0
-        self.align_playing     = False   # reproducción natural del MP3 en el editor
-        self.align_detecting   = False   # análisis librosa en curso
-        self.align_detected_tempo = None
-        self.align_onsets      = None    # ticks de onsets (segundos)
+        self.align_state = AlignEditorState()
         self.ed_offset         = 0.0
         self.ed_tempo_map      = []
         self._align_x0 = 60;  self._align_w = W - 120
@@ -394,16 +381,7 @@ class BassKaraoke(
         self._song_start_map = {}
         self._tempo_maps    = {}
         # ── Generación de partitura (canciones solo-audio o .sng, F7) ──
-        self.gen_running        = False
-        self.gen_msg            = ""
-        self.gen_frac           = 0.0
-        self.gen_result         = None
-        self.gen_error          = ""
-        self.gen_notice         = False
-        self.gen_song_dir       = None
-        self.gen_from_sng       = False
-        self.gen_barlen         = 3
-        self.gen_bars_per_chord = 2
+        self.gen_state = GenerationState()
         self._gen_msg_timer     = 0.0
         self.songs          = self._scan_songs()
         self._piano_keys_list = []
@@ -415,24 +393,10 @@ class BassKaraoke(
         self.chords_path  = ""
 
         # ── Editor de acordes (Y) ─────────────────────────────────────
-        self.chord_edit_open   = False
-        self.chord_edit_sel    = 0
-        self.chord_edit_top    = 0
-        self.chord_edit_typing = False
-        self.chord_edit_buf    = ""
-        self.chord_edit_msg    = ""
-        self.chord_edit_dirty  = False
+        self.chord_edit_state = ChordEditState()
 
         # ── Edición sobre la barra de acordes (clic en la tira) ────────
-        self.chord_bar_sel_measure    = None   # compás seleccionado
-        self.chord_bar_typing         = False
-        self.chord_bar_buf            = ""
-        self.chord_bar_target_sec     = None   # inicio del compás editado
-        self.chord_bar_target_end_sec = None   # inicio del siguiente compás
-        self.chord_bar_msg            = ""
-        self.chord_bar_sugg_idx       = -1     # fila resaltada del desplegable
-        self.chord_bar_sugg_cache     = []     # sugerencias mostradas
-        self.chord_bar_replace        = False  # el próximo carácter sustituye
+        self.chord_bar_state = ChordBarState()
 
         # ── Score pre-render ───────────────────────────────────────────
         self.score_renderer  = "verovio"
