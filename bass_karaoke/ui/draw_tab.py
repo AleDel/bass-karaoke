@@ -24,6 +24,7 @@ from ..config import (
     TAB_Y,
     W,
 )
+from .render_cache import alpha_line, halo, render_text
 
 
 def draw_tab(app) -> None:
@@ -41,7 +42,7 @@ def draw_tab(app) -> None:
     pygame.draw.rect(app.screen, C_BG2, (0, TAB_Y, W, TAB_H))
 
     for s, y in STR_Y.items():
-        lbl = app.font_small.render(STRING_NAMES[s], True, STRING_COLORS[s])
+        lbl = render_text(app.font_small, STRING_NAMES[s], STRING_COLORS[s])
         app.screen.blit(lbl, (4, int(y) - lbl.get_height() // 2))
         pygame.draw.line(app.screen, STRING_COLORS[s],
                          (28, int(y)), (W, int(y)), STRING_THICK[s])
@@ -57,7 +58,7 @@ def draw_tab(app) -> None:
     # Aviso de cobertura del parser (persistente, no solo en consola)
     warn = app.coverage_warning() if hasattr(app, "coverage_warning") else None
     if warn:
-        wt = app.font_small.render(warn, True, (20, 20, 30))
+        wt = render_text(app.font_small, warn, (20, 20, 30))
         bx0 = W // 2 - wt.get_width() // 2 - 10
         pygame.draw.rect(app.screen, C_WAIT,
                          (bx0, TAB_Y + 18, wt.get_width() + 20,
@@ -81,16 +82,13 @@ def draw_tab(app) -> None:
             base_col = C_ERR
 
         ty = TAB_Y + TAB_H - 3
-        surf_line = pygame.Surface((abs(offset_px) + 2, 3), pygame.SRCALPHA)
-        pygame.draw.line(surf_line, (*base_col, alpha_int),
-                         (0, 1), (abs(offset_px), 1), 2)
+        surf_line = alpha_line(abs(offset_px) + 2, 3, base_col, alpha_int, 2)
         app.screen.blit(surf_line, (min(CURSOR_X, hit_x), ty - 10))
-        dot_s = pygame.Surface((10, 10), pygame.SRCALPHA)
-        pygame.draw.circle(dot_s, (*base_col, alpha_int), (5, 5), 5)
+        dot_s = halo(5, base_col, alpha_int)
         app.screen.blit(dot_s, (hit_x - 5, ty - 15))
         sign  = "TARDE" if delta_ms > 20 else ("ANTES" if delta_ms < -20 else "OK")
         t_str = f"{sign} {delta_ms:+.0f}ms"
-        txt   = app.font_tiny.render(t_str, True, base_col)
+        txt   = render_text(app.font_tiny, t_str, base_col)
         txt_s = pygame.Surface((txt.get_width(), txt.get_height()), pygame.SRCALPHA)
         txt_s.blit(txt, (0, 0))
         txt_s.set_alpha(alpha_int)
@@ -103,7 +101,7 @@ def draw_tab(app) -> None:
         remain16 = app.notes[0]["start16"] - app.beat_time
         secs = remain16 / 4.0 * (60.0 / max(1, app.bpm))
         msg = f"El bajo entra en {secs:.0f}s  —  SPACE para tocar"
-        mt = app.font_med.render(msg, True, C_GREEN)
+        mt = render_text(app.font_med, msg, C_GREEN)
         bg = pygame.Surface((mt.get_width() + 24, mt.get_height() + 12),
                             pygame.SRCALPHA)
         pygame.draw.rect(bg, (10, 30, 18, 220), bg.get_rect(), border_radius=8)
@@ -122,7 +120,7 @@ def draw_tab(app) -> None:
             if 30 < bx < W:
                 pygame.draw.line(app.screen, (55, 55, 80),
                                  (bx, TAB_Y + 6), (bx, TAB_Y + TAB_H - 6), 1)
-                m = app.font_tiny.render(str(num), True, C_GRAY)
+                m = render_text(app.font_tiny, str(num), C_GRAY)
                 app.screen.blit(m, (bx + 2, TAB_Y + 2))
     else:
         for b in app.bar_starts16():
@@ -136,7 +134,7 @@ def draw_tab(app) -> None:
         if 30 < sx < W:
             pygame.draw.line(app.screen, C_SECTION, (sx, TAB_Y), (sx, TAB_Y + TAB_H), 1)
             app.screen.blit(
-                app.font_tiny.render(f"[{label}]", True, C_SECTION),
+                render_text(app.font_tiny, f"[{label}]", C_SECTION),
                 (sx + 3, TAB_Y + 3))
 
     R_CUR  = 14
@@ -157,8 +155,7 @@ def draw_tab(app) -> None:
             r   = R_CUR
             pulse = 0.5 + 0.5 * math.sin(time.time() * 9)
             hr    = int(r + 6 + pulse * 3)
-            hs    = pygame.Surface((hr * 2, hr * 2), pygame.SRCALPHA)
-            pygame.draw.circle(hs, (*col, 45), (hr, hr), hr)
+            hs    = halo(hr, col, 45)
             app.screen.blit(hs, (nx - hr, ny - hr))
         elif is_past:
             col = (75, 75, 95)   # gris para notas pasadas
@@ -172,8 +169,7 @@ def draw_tab(app) -> None:
             if is_cur:
                 pygame.draw.line(app.screen, col, (nx, ny), (nx + dur_px, ny), 3)
             else:
-                s = pygame.Surface((dur_px, 3), pygame.SRCALPHA)
-                pygame.draw.line(s, (*col, 90), (0, 1), (dur_px, 1), 3)
+                s = alpha_line(dur_px, 3, col, 90)
                 app.screen.blit(s, (nx, ny - 1))
 
         pygame.draw.circle(app.screen, col, (nx, ny), r)
@@ -181,7 +177,7 @@ def draw_tab(app) -> None:
 
         f       = app.font_med if is_cur else app.font_small
         txt_col = (195, 195, 215) if is_past else C_WHITE
-        txt = f.render(str(note["fret"]), True, txt_col)
+        txt = render_text(f, str(note["fret"]), txt_col)
         app.screen.blit(txt, (nx - txt.get_width() // 2,
                                ny - txt.get_height() // 2))
 
@@ -210,21 +206,20 @@ def draw_tab(app) -> None:
         # Halo pulsante de la nota detectada
         pulse = 0.5 + 0.5 * math.sin(time.time() * 10)
         hr = int(16 + pulse * 5)
-        hs = pygame.Surface((hr * 2, hr * 2), pygame.SRCALPHA)
-        pygame.draw.circle(hs, (*gh_col, 65), (hr, hr), hr)
+        hs = halo(hr, gh_col, 65)
         app.screen.blit(hs, (CURSOR_X - hr, ny - hr))
 
         # Círculo sólido de la nota detectada (más pequeño que el esperado)
         pygame.draw.circle(app.screen, gh_col, (CURSOR_X, ny), 9)
         pygame.draw.circle(app.screen, (220, 220, 255), (CURSOR_X, ny), 9, 2)
-        f_t = app.font_tiny.render(str(det_fret), True, (10, 10, 18))
+        f_t = render_text(app.font_tiny, str(det_fret), (10, 10, 18))
         app.screen.blit(f_t, (CURSOR_X - f_t.get_width() // 2,
                                ny - f_t.get_height() // 2))
 
         # Etiqueta con nombre de nota + cents (a la derecha del cursor)
         note_lbl  = getattr(app, 'stable_note', '?')
         cents_lbl = f" {int(cents):+d}¢" if cents is not None else ""
-        lbl_surf  = app.font_tiny.render(f"{note_lbl}{cents_lbl}", True, gh_col)
+        lbl_surf  = render_text(app.font_tiny, f"{note_lbl}{cents_lbl}", gh_col)
         lx = CURSOR_X + 18
         ly = ny - lbl_surf.get_height() // 2
         ly = max(TAB_Y + 2, min(ly, TAB_Y + TAB_H - lbl_surf.get_height() - 2))
