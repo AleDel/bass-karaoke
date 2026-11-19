@@ -1,49 +1,16 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
+# v0 sandbox internal files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.design-cache/
+.v0-trash/
+.vercel/
 
-# Config personal del usuario (no subir)
-bass_karaoke_config.json
+# Environment variables
+.env*.local
 
-# Copias de seguridad locales (*.bak, *.bak2, *.orig…)
-*.bak
-*.bak[0-9]*
-*.orig
-
-# Logs de ejecución
-logs/
-
-# Archivos generados / salidas de test
-output_test.mei
-score_preview.png
-score_test.png
-test_music21_strip.png
-syntax_check.txt
-*.mei
-*.png
-!assets/Screenshot.png
-
-# Entornos virtuales
-venv/
-env/
-.venv/
-
-# Builds de PyInstaller
-build/
-dist/
-
-# VS Code
-.vscode/
-
-# Aubio (librería externa, no parte del proyecto)
-aubio/
-
-# Motor de JJazzLab descargado bajo demanda (LGPL: no redistribuir)
-vendor/
-
-# Analisis de calidad (SonarQube / cobertura)
-coverage.xml
-.coverage
-.scannerwork/
-
+# Common ignores
+node_modules
+.next/
+.DS_Store

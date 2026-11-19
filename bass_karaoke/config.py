@@ -151,7 +151,7 @@ BOTTOM_Y  = H - 52
 
 # Piano range (bass guitar range)
 PIANO_START_MIDI = 28   # E1
-PIANO_END_MIDI   = 63   # Eb4
+PIANO_END_MIDI   = 52 #63   # Eb4
 
 # ─── Paleta de colores ────────────────────────────────────────────────────────
 C_BG      = ( 10,  10,  18)
