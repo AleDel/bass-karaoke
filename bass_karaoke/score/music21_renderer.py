@@ -21,7 +21,8 @@ except ImportError:
 _STEP_DIA7 = {'C': 0, 'D': 1, 'E': 2, 'F': 3, 'G': 4, 'A': 5, 'B': 6}
 
 
-def init_score_surface_music21(notes: list, musicxml_path: str = MUSICXML_PATH):
+def init_score_surface_music21(notes: list, musicxml_path: str = MUSICXML_PATH,
+                               height: int | None = None):
     """
     Renderiza el MusicXML con music21.
     Obtiene la clave y compás de music21, luego dibuja la tira con
@@ -62,7 +63,7 @@ def init_score_surface_music21(notes: list, musicxml_path: str = MUSICXML_PATH):
 
         # Dibujar con app.notes → alineación perfecta con note_xs
         surf, note_xs = _draw_score_m21_strip(
-            notes, bar_ql, bottom_diatonic, diatonic_offset)
+            notes, bar_ql, bottom_diatonic, diatonic_offset, height)
 
         log.info(f"[Music21] {surf.get_width()}×{surf.get_height()}px  "
               f"notas={len(notes)}  render=manual")
@@ -75,7 +76,8 @@ def init_score_surface_music21(notes: list, musicxml_path: str = MUSICXML_PATH):
         return None, []
 
 
-def _draw_score_m21_strip(notes, bar_ql, bottom_diatonic, diatonic_offset):
+def _draw_score_m21_strip(notes, bar_ql, bottom_diatonic, diatonic_offset,
+                          height=None):
     """
     Dibuja una tira de pentagrama con pygame puro usando app.notes.
     Devuelve (surf, note_xs) donde note_xs es [(start16, pixel_x), ...].
@@ -84,10 +86,10 @@ def _draw_score_m21_strip(notes, bar_ql, bottom_diatonic, diatonic_offset):
     PX_PER_16 = 30           # 30 px por figura de semicorchea
     total16   = (notes[-1]['start16'] + notes[-1]['dur']) if notes else 1
     img_w     = max(W * 4, total16 * PX_PER_16, 3000)
-    img_h     = SCORE_H - 4
+    img_h     = int(height or (SCORE_H - 4))
 
     surf = pygame.Surface((img_w, img_h))
-    surf.fill((250, 250, 246))   # estilo papel
+    surf.fill((17, 19, 23))   # partitura nocturna (tinta clara)
 
     if not notes or total16 <= 0:
         return surf, []
@@ -98,13 +100,13 @@ def _draw_score_m21_strip(notes, bar_ql, bottom_diatonic, diatonic_offset):
     y_lines  = [y_bottom - i * line_sp for i in range(5)]
 
     # Líneas del pentagrama
-    C_STAFF = (65, 65, 85)
+    C_STAFF = (146, 152, 162)
     for y_line in y_lines:
         pygame.draw.line(surf, C_STAFF,
                          (0, int(y_line)), (img_w, int(y_line)), 1)
 
     # Líneas de compás desde measure_num de las notas
-    C_BAR = (45, 45, 65)
+    C_BAR = (108, 114, 126)
     seen_m: dict = {}
     for n in notes:
         m = n.get('measure_num', 0)
@@ -116,8 +118,8 @@ def _draw_score_m21_strip(notes, bar_ql, bottom_diatonic, diatonic_offset):
                          (xb, int(y_lines[0])), (xb, int(y_lines[-1])), 1)
 
     r_note   = max(3, int(half_sp * 0.85))   # ≈ 6 px
-    C_NOTE   = (20, 20, 28)
-    C_LEDGER = (80, 80, 90)
+    C_NOTE   = (232, 236, 242)
+    C_LEDGER = (150, 156, 166)
     note_xs  = []
 
     for n in notes:

@@ -172,7 +172,8 @@ def strip_tab_staff(xml_str: str) -> str:
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding='unicode')
 
 
-def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
+def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH,
+                       height: int | None = None):
     """
     Pre-renderiza el MusicXML con Verovio → cairosvg → pygame.Surface.
 
@@ -195,8 +196,8 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
             "pageHeight":       2000,
             "adjustPageHeight": True,
             "breaks":           "none",
-            "scale":            50,
-            "spacingLinear":    0.20,
+            "scale":            70,
+            "spacingLinear":    0.38,
             "footer":           "none",
             "header":           "none",
         })
@@ -286,50 +287,49 @@ def init_score_surface(notes: list, musicxml_path: str = MUSICXML_PATH):
         import numpy as _np
         # Altura útil de la tira en la app (ver draw_score: NAME_H=14, blit en
         # SY+NAME_H+1 con clip hasta SY+SCORE_H).
-        target_h = SCORE_H - 15
-        # Supersample x2 para trazos nítidos al reducir.
+        target_h = int(height or (SCORE_H - 15))
+        # Supersample a 2x y reducción final a target_h: trazo fino y nítido,
+        # con un zoom leve para que las notas se lean como en la referencia.
+        zoom = 1.10
+        render_h = max(target_h * 2, target_h)
         png_bytes = cairosvg.svg2png(
             bytestring=svg_clean.encode(),
-            output_height=target_h * 2,
+            output_height=render_h,
         )
         big = pygame.image.load(BytesIO(png_bytes)).convert_alpha()
 
-        # Recortar el aire vertical de la página: sin esto el pentagrama ocupa
-        # ~1/3 de la tira y se ve minúsculo. Solo recorte vertical → las X no
-        # cambian y el mapeo de notas sigue válido. El recorte se centra en el
-        # pentagrama (no en la tinta total) para no dejar margen abajo.
+        # Recortar el aire vertical de la página sin cambiar las X (el mapeo de
+        # notas sigue siendo válido) y reducir al alto de la tira.
         _alp = pygame.surfarray.pixels_alpha(big)
         _any = (_alp > 20).max(axis=0)
         _rows = _np.nonzero(_any)[0]
         _frac = (_alp > 20).mean(axis=0)
         _staff = _np.nonzero(_frac > 0.25)[0]   # líneas del pentagrama: densas
         del _alp
-        if len(_rows):
-            pad = 10
-            y0 = int(_rows.min()) - pad
-            y1 = int(_rows.max()) + pad
-            if len(_staff):
-                staff_c = float(_np.median(_staff))
-                hh = max(staff_c - y0, y1 - staff_c)
-                y0, y1 = int(staff_c - hh), int(staff_c + hh)
-            y0 = max(0, y0)
-            y1 = min(big.get_height(), y1)
-            big = big.subsurface(pygame.Rect(0, y0, big.get_width(),
-                                             max(1, y1 - y0))).copy()
-        if big.get_height() != target_h:
-            ratio = target_h / big.get_height()
-            big = pygame.transform.smoothscale(
-                big, (max(1, int(big.get_width() * ratio)), target_h))
-        surf = big
+        if len(_staff):
+            mid = (int(_staff.min()) + int(_staff.max())) / 2
+        elif len(_rows):
+            mid = (int(_rows.min()) + int(_rows.max())) / 2
+        else:
+            mid = big.get_height() / 2
+        band = max(target_h, int(big.get_height() / zoom))
+        y0 = max(0, int(mid - band / 2))
+        y0 = min(y0, max(0, big.get_height() - band))
+        y1 = min(big.get_height(), y0 + band)
+        crop = big.subsurface(pygame.Rect(0, y0, big.get_width(),
+                                          max(1, y1 - y0))).copy()
+        surf = pygame.transform.smoothscale(
+            crop, (max(1, int(crop.get_width() * target_h / crop.get_height())),
+                   target_h))
         scale_x = surf.get_width() / vb_w
 
-        # Estilo papel mezclando por alfa (conserva el antialiasing; el umbral
-        # duro anterior dejaba bordes dentados).
+        # Estilo "partitura nocturna": tinta clara sobre el fondo de la tarjeta,
+        # mezclando por alfa para conservar el antialiasing.
         arr   = pygame.surfarray.pixels3d(surf)
         alpha = pygame.surfarray.pixels_alpha(surf)
         _a = (alpha[..., None].astype(_np.float32)) / 255.0
-        _ink   = _np.array([20, 20, 28], dtype=_np.float32)
-        _paper = _np.array([250, 250, 246], dtype=_np.float32)
+        _ink   = _np.array([234, 238, 244], dtype=_np.float32)
+        _paper = _np.array([ 17,  19,  23], dtype=_np.float32)
         arr[:, :, :] = (_ink * _a + _paper * (1.0 - _a)).astype(_np.uint8)
         alpha[:, :] = 255
         del arr, alpha, _a

@@ -20,9 +20,9 @@ def build_piano_keys(start_midi: int, end_midi: int,
         return []
 
     ww = pw / white_count
-    bw = max(5, ww * 0.58)
+    bw = max(5, ww * 0.60)
     wh = ph - 4
-    bh = int(ph * 0.62)
+    bh = int(ph * 0.55)
 
     white_x = {}
     wi = 0

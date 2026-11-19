@@ -1,15 +1,29 @@
 {
-  "bpm": 113.0,
+  "bpm": 142.0,
   "bpm_map": {
     "Feet Dont Fail Me Now": 113.0,
     "Infant Eyes": 60.0,
-    "Infant Eyes  9 Measure": 113.0
+    "Infant Eyes  9 Measure": 113.0,
+    "Ayer Hable Con Dios": 93.0,
+    "26 2": 205.0,
+    "All Of Me": 142.0,
+    "Infant Eyes Sgn": 70.0
   },
-  "mp3_offset_sec": 25.99,
+  "mp3_offset_sec": 0.0,
   "mp3_offset_map": {
     "Feet Dont Fail Me Now": 0.15,
     "Infant Eyes": 25.99,
-    "Infant Eyes  9 Measure": 25.99
+    "Infant Eyes  9 Measure": 25.99,
+    "Ayer Hable Con Dios": 2.251505376344086,
+    "26 2": 0.0,
+    "All Of Me": 0.0,
+    "Infant Eyes Sgn": 0.0
+  },
+  "song_start_map": {
+    "Ayer Hable Con Dios": 0.294516129032258,
+    "26 2": 0.0,
+    "All Of Me": 0.0,
+    "Infant Eyes Sgn": 0.0
   },
   "tempo_maps": {
     "Feet Dont Fail Me Now": [
@@ -37,12 +51,59 @@
         113.0,
         "quarter"
       ]
+    ],
+    "Ayer Hable Con Dios": [
+      [
+        0,
+        93.0,
+        "quarter"
+      ],
+      [
+        12,
+        93.0,
+        "quarter"
+      ],
+      [
+        114,
+        93.0,
+        "quarter"
+      ]
+    ],
+    "26 2": [
+      [
+        0,
+        205.0,
+        "quarter"
+      ]
+    ],
+    "All Of Me": [
+      [
+        0,
+        142.0,
+        "quarter"
+      ]
+    ],
+    "Infant Eyes Sgn": [
+      [
+        0,
+        70.0,
+        "quarter"
+      ]
     ]
   },
-  "device_idx": 7,
+  "device_idx": 1,
   "muted": false,
+  "mix_song": 1.0,
+  "mix_bass": 0.6,
+  "mix_band": 0.6,
+  "mix_click": 1.0,
+  "muted_bass": false,
+  "muted_band": false,
+  "muted_click": false,
   "pitch_method": "mpm",
   "countdown_enabled": false,
   "score_renderer": "verovio",
-  "song": "Infant Eyes  9 Measure"
+  "gen_barlen": 3,
+  "gen_bars_per_chord": 2,
+  "song": "All Of Me"
 }

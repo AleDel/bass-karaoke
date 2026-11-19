@@ -1,67 +1,51 @@
 """
-Franja de waveform sincronizada (vista principal).
+Carril de audio sincronizado dentro de la tarjeta de partitura.
 
-Representa DÓNDE VA EL AUDIO: la envolvente del MP3 scrollea con el mismo
-reloj que la tira de acordes, la tablatura y la partitura (viewport_x +
-CURSOR_X), y el tramo ya reproducido (izquierda del playhead) se resalta.
-
-- La línea verde marca el inicio de canción (compás 1): song_start_sec.
-- La línea roja marca el inicio del bajo: el instante del MP3
-  (mp3_offset_sec) donde suena la PRIMERA nota del bajo.
-  El silencio entre ambas se estira sin mover el resto de la partitura.
-- Interacción (ver app.handle_event):
-    · botón izquierdo / derecho  → desplazarse por la canción (como el tab)
-    · arrastrar cerca de verde/roja → mover cada ancla por separado
-    · botón central              → mover el audio (ambas anclas a la vez)
+Sustituye la franja grande anterior: la envolvente del MP3 scrollea con el
+mismo reloj que partitura y tablatura. Sin MP3 solo queda una etiqueta
+tenue, que es el caso del modo metrónomo.
 """
-
 import pygame
 
-from ..config import (
-    C_ACCENT,
-    C_BG2,
-    C_GRAY,
-    C_PANEL,
-    C_RED,
-    WAVEFORM_H,
-    WAVEFORM_Y,
-    W,
-)
+from . import theme as T
+from .theme import ACCENT, TEXT, TEXT_MUTED
 
-CURSOR_X   = W // 3
-_WAVE_PAST = (96, 200, 190)    # tramo ya reproducido (teal, como el karaoke)
-_WAVE_FUTR = (72, 92, 140)     # tramo por venir (azul tenue)
-_TICK_COL  = (40, 40, 62)
-_START_COL = (70, 220, 120)    # ancla de inicio de canción (verde)
+_PAST = (86, 198, 190)
+_FUTURE = (64, 82, 118)
+_START = (74, 214, 124)
+_BASS = (232, 92, 92)
 
 
 def draw_waveform_strip(app):
-    y0, h = WAVEFORM_Y, WAVEFORM_H
-    screen = app.screen
-    pygame.draw.rect(screen, C_BG2, (0, y0, W, h))
+    L = app.layout
+    r = L.audio
+    CURSOR_X = L.cursor_x
+    f = T.font(L.fs(9))
 
-    wave  = getattr(app, "song_wave", None)
-    n     = int(getattr(app, "song_wave_n", 0) or 0)
+    wave = getattr(app, "song_wave", None)
+    n = int(getattr(app, "song_wave_n", 0) or 0)
     total = float(getattr(app, "song_total_sec", 0.0) or 0.0)
 
     if not wave or n <= 0 or total <= 0.0:
-        screen.blit(app.font_small.render("waveform: sin MP3", True, C_GRAY),
-                    (10, y0 + h // 2 - 8))
-        pygame.draw.line(screen, C_PANEL, (0, y0), (W, y0), 1)
+        T.text(app.screen, f, "AUDIO  ·  sin MP3", (76, 82, 92),
+               (r.x + int(6 * L.s), r.centery), "midleft")
+        pygame.draw.line(app.screen, (38, 40, 43),
+                         (r.x, r.bottom - 1), (r.right, r.bottom - 1), 1)
         return
 
-    cy  = y0 + h // 2
-    amp = max(2, h // 2 - 8)
-    vx  = app.view.viewport_x
+    cy = r.centery
+    amp = max(2, r.h // 2 - 2)
+    vx = app.view.viewport_x
     ppt = app.view.px_per_16th or 1.0
     wmin, wmax = wave
-
     offset = float(app.mp3_offset_sec)
-    s0     = app._bass_start16()
-    start  = float(getattr(app, "song_start_sec", 0.0))
-    def sec_at(s16):
-        return app._eff_seconds(s16, offset)
+    start = float(getattr(app, "song_start_sec", 0.0))
+    s0 = app._bass_start16()
 
+    prev_clip = app.screen.get_clip()
+    app.screen.set_clip(r)
+
+    # Rejilla de compases
     phase = app.grid_phase16()
     for s16 in app.bar_starts16():
         if s16 > 0:
@@ -69,59 +53,47 @@ def draw_waveform_strip(app):
         if s16 <= 0:
             continue
         bx = app.px_of(s16) - vx + CURSOR_X
-        if 0 <= bx < W:
-            pygame.draw.line(screen, _TICK_COL, (bx, y0 + 3), (bx, y0 + h - 3), 1)
+        if r.x <= bx < r.right:
+            pygame.draw.line(app.screen, (40, 42, 45),
+                             (bx, r.y + 1), (bx, r.bottom - 1), 1)
 
-    # ── Envolvente: pasado (resaltado) / futuro (tenue) ───────────────
-    for x in range(W):
+    # Envolvente
+    for x in range(int(r.x), int(r.right)):
         s16 = (x - CURSOR_X + vx) / ppt
         if s16 < 0.0:
             continue
-        mp3 = sec_at(s16)
+        mp3 = app._eff_seconds(s16, offset)
         if mp3 < 0.0 or mp3 > total:
             continue
-        gi = int(mp3 / total * n)
-        if gi >= n:
-            gi = n - 1
+        gi = min(n - 1, int(mp3 / total * n))
         y1 = cy - int(wmax[gi] * amp)
         y2 = cy - int(wmin[gi] * amp)
         if y2 - y1 < 1:
             y2 = y1 + 1
-        col = _WAVE_PAST if x < CURSOR_X else _WAVE_FUTR
-        pygame.draw.line(screen, col, (x, y1), (x, y2))
+        col = _PAST if x < CURSOR_X else _FUTURE
+        pygame.draw.line(app.screen, col, (x, y1), (x, y2))
 
-    pygame.draw.line(screen, (60, 60, 90), (0, cy), (W, cy), 1)
-
-    # ── Ancla de inicio de canción / compás 1 (verde) ─────────────────
+    # Anclas
     xs = app.px_of(0) - vx + CURSOR_X
     if abs(xs - CURSOR_X) < 3:
-        xs -= 2   # no tapar el playhead cuando la partitura empieza en él
-    if -1 <= xs < W + 1:
-        pygame.draw.line(screen, _START_COL, (xs, y0 + 1), (xs, y0 + h - 1), 2)
-        pygame.draw.polygon(screen, _START_COL, [
-            (xs - 5, y0 + 1), (xs + 5, y0 + 1), (xs, y0 + 8)])
-        screen.blit(app.font_tiny.render("inicio", True, _START_COL),
-                    (max(2, xs - 52), y0 + 2))
-
-    # ── Marca del inicio del bajo (offset) ────────────────────────────
+        xs -= 2
+    if r.x - 1 <= xs < r.right + 1:
+        pygame.draw.line(app.screen, _START, (xs, r.y + 1), (xs, r.bottom - 1), 1)
     mx = app.px_of(s0) - vx + CURSOR_X
-    if -1 <= mx < W + 1:
-        pygame.draw.line(screen, C_RED, (mx, y0 + 1), (mx, y0 + h - 1), 2)
-        pygame.draw.polygon(screen, C_RED, [
-            (mx - 5, y0 + 1), (mx + 5, y0 + 1), (mx, y0 + 8)])
-        screen.blit(app.font_tiny.render("bajo", True, C_RED), (mx + 5, y0 + 2))
+    if r.x - 1 <= mx < r.right + 1:
+        pygame.draw.line(app.screen, _BASS, (mx, r.y + 1), (mx, r.bottom - 1), 1)
 
-    # ── Playhead ──────────────────────────────────────────────────────
-    pygame.draw.line(screen, C_ACCENT, (CURSOR_X, y0 + 1), (CURSOR_X, y0 + h - 1), 2)
+    # Playhead
+    pygame.draw.line(app.screen, ACCENT, (CURSOR_X, r.y), (CURSOR_X, r.bottom), 1)
 
-    # ── Etiquetas ─────────────────────────────────────────────────────
-    screen.blit(app.font_tiny.render("AUDIO", True, C_GRAY), (6, y0 + 3))
-    info = (f"central = mover audio ({offset:+.2f}s)   "
-            f"inicio {start:.2f}s   "
-            f"arrastra verde/roja = inicio/bajo   "
-            f"izq/der = navegar   Ctrl+S = guardar")
-    it = app.font_tiny.render(info, True, C_GRAY)
-    screen.blit(it, (W - it.get_width() - 8, y0 + h - 14))
+    app.screen.set_clip(prev_clip)
 
-    pygame.draw.line(screen, C_PANEL, (0, y0), (W, y0), 1)
-    pygame.draw.line(screen, C_PANEL, (0, y0 + h - 1), (W, y0 + h - 1), 1)
+    # Etiquetas de anclas (solo dentro del carril)
+    T.text(app.screen, f, "AUDIO", (76, 82, 92),
+           (r.x + int(4 * L.s), r.y + 1), "topleft")
+    if r.x < xs < r.right:
+        T.text(app.screen, f, "inicio", _START, (int(xs) + 3, r.y + 1), "topleft")
+    if r.x < mx < r.right:
+        T.text(app.screen, f, "bajo", _BASS, (int(mx) + 3, r.y + 1), "topleft")
+    T.text(app.screen, f, f"{offset:+.2f}s", TEXT_MUTED,
+           (r.right - int(4 * L.s), r.y + 1), "topright")

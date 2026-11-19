@@ -5,17 +5,7 @@ y `app.handle_event` responde ``True`` por ellos.
 """
 import pygame
 
-from ..config import (
-    HEADER_H,
-    KARAOKE_H,
-    KARAOKE_Y,
-    NECK_Y,
-    TAB_Y,
-    WAVEFORM_H,
-    WAVEFORM_Y,
-    W,
-)
-
+from ..config import HEADER_H
 
 class MouseMixin:
     """Reparto del ratón entre los paneles y la navegación de la onda."""
@@ -29,14 +19,30 @@ class MouseMixin:
                     or self.training_open or self.lab_open
                     or self.cor_open or self.ear_open)
 
-    @staticmethod
-    def _in_waveform(pos):
-        return WAVEFORM_Y <= pos[1] < WAVEFORM_Y + WAVEFORM_H
+    def _in_waveform(self, pos):
+        """Carril de audio dentro de la tarjeta de partitura."""
+        return self.layout.audio.collidepoint(pos)
 
     # ── botón pulsado ──────────────────────────────────────────────────
     def _on_mouse_down(self, event):
         if not self._mouse_down_modal(event):
             self._mouse_down_zone(event)
+
+    def _transport_click(self, pos):
+        """Barra de transporte: play, reinicio, tempo y metrónomo."""
+        L = self.layout
+        if not L.transport.collidepoint(pos):
+            return False
+        b = L.buttons
+        if b["play"].collidepoint(pos):
+            self.toggle_play()
+        elif b["restart"].collidepoint(pos):
+            self.reiniciar()
+        elif b["metro"].collidepoint(pos):
+            self._toggle_metro()
+        elif b["bpm"].collidepoint(pos):
+            self.ajustar_bpm(+5)
+        return True
 
     def _mouse_down_modal(self, event):
         """Paneles que se comen el clic; True si el evento queda consumido."""
@@ -51,12 +57,10 @@ class MouseMixin:
         return self._click_strip(event)
 
     def _click_strip(self, event):
-        """Tira de acordes: edita la celda; fuera de ella, deselecciona."""
-        in_strip = KARAOKE_Y <= event.pos[1] <= KARAOKE_Y + KARAOKE_H
-        if in_strip and self.view.chords_on and (
-                self.chord_events or self.lyric_events):
+        """Tarjeta de acordes: selecciona el compás que suena para editarlo."""
+        if self.layout.chords.collidepoint(event.pos):
             if event.button == 1:
-                self._chord_bar_click(event.pos)
+                self._chord_bar_select_current()
             return True
         if event.button == 1:
             self._chord_bar_clear()
@@ -72,10 +76,12 @@ class MouseMixin:
                 break
 
     def _mouse_down_zone(self, event):
-        """Clic en el área de juego: alineación, onda, mástil o piano."""
+        """Clic en el área de juego: alineación, transporte, onda o mástil."""
         if self.align_editor_open:
             self._mouse_down_align(event)
         elif event.button == 1:
+            if self._transport_click(event.pos):
+                return
             self._mouse_down_playback(event)
         elif event.button in (2, 3):
             self._mouse_down_wave(event)
@@ -117,7 +123,8 @@ class MouseMixin:
                 self._mouse_down_anchor_or_seek(event)
             elif not self._preview_hit(event.pos):
                 mx, my = event.pos
-                if TAB_Y <= my < NECK_Y:
+                L = self.layout
+                if L.score.collidepoint(mx, my):
                     self._start_seek_drag(mx)
 
     def _preview_hit(self, pos):
@@ -136,12 +143,12 @@ class MouseMixin:
         """Cerca de la línea verde/roja se agarra el ancla; si no, se busca."""
         mx = event.pos[0]
         vx = self.view.viewport_x
-        cx = W // 3
+        cx = self.layout.cursor_x
         s0 = self._bass_start16()
         xb = self.px_of(s0) - vx + cx
         xs = cx - vx
-        db = abs(mx - xb) if -1 <= xb < W + 1 else 999
-        ds = abs(mx - xs) if -1 <= xs < W + 1 else 999
+        db = abs(mx - xb) if -1 <= xb < self.layout.w + 1 else 999
+        ds = abs(mx - xs) if -1 <= xs < self.layout.w + 1 else 999
         if min(db, ds) <= 9:
             self.view._anchor_drag = ("bass" if db <= ds else "start")
             self.view._anchor_drag_mx = mx
@@ -207,13 +214,15 @@ class MouseMixin:
             self._mouse_motion_drag(event)
 
     def _update_chip_hover(self, pos):
-        """Resalta el chip del header bajo el cursor."""
+        """Resalta el chip de la cabecera o la barra de transporte."""
         self.view.chip_hover = ""
-        if 0 <= pos[1] <= HEADER_H:
+        if 0 <= pos[1] <= self.layout.header.h:
             for action, _text, rect in self._header_chips_layout()[0]:
                 if rect.collidepoint(pos):
                     self.view.chip_hover = action
                     break
+        elif self.layout.buttons["play"].collidepoint(pos):
+            self.view.chip_hover = "play"
 
     def _mouse_motion_drag(self, event):
         if self.align_editor_open:

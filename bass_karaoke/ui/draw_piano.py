@@ -1,131 +1,109 @@
 """
-Dibuja el teclado de piano (zona PIANO).
+Teclado de piano de la tarjeta inferior central.
+
+Rango E1–Eb4 (el del bajo). La nota actual se enciende en cian, la
+detectada se marca en azul y la pulsada con el ratón lleva borde de acento.
 """
 import math
 
 import pygame
 
 from ..config import (
-    C_ACCENT,
-    C_BLUE,
-    C_DGRAY,
-    C_ERR,
-    C_GRAY,
-    C_OK,
-    C_WAIT,
     MIN_HZ,
     PIANO_END_MIDI,
-    PIANO_H,
     PIANO_START_MIDI,
-    PIANO_W,
-    PIANO_X,
-    PIANO_Y,
 )
+from . import theme as T
+from .theme import ACCENT, TEXT, TEXT_MUTED
 from .widgets import build_piano_keys
 
 
-def draw_piano(app) -> None:
-    px, py, pw, ph = PIANO_X, PIANO_Y, PIANO_W, PIANO_H
-
-    if not app._piano_keys_list:
+def _keys(app):
+    L = app.layout
+    rect = L.piano_keys
+    if (not app._piano_keys_list
+            or getattr(app, "_piano_keys_rect", None) != tuple(rect)):
         app._piano_keys_list = build_piano_keys(
-            PIANO_START_MIDI, PIANO_END_MIDI, px, py, pw, ph)
+            PIANO_START_MIDI, PIANO_END_MIDI,
+            rect.x, rect.y, rect.w, rect.h)
+        app._piano_keys_rect = tuple(rect)
+    return app._piano_keys_list
 
-    pygame.draw.rect(app.screen, (12, 12, 20), (px, py, pw, ph))
+
+def draw_piano(app) -> None:
+    L = app.layout
+    card = L.piano
+
+    rect = L.piano_keys
+    T.inset(app.screen, rect, radius=max(4, int(6 * L.s)),
+            color=T.INSET_DEEP)
 
     cur = app.current_note()
-    cur_midi = int(round(12 * math.log2(cur["hz"] / 440) + 69)) if cur else -999
+    cur_midi = (int(round(12 * math.log2(cur["hz"] / 440) + 69))
+                if cur and cur.get("hz", 0) > 0 else 36)  # C2 como en la referencia
 
     with app.pitch_lock:
         det_hz = app.stable_hz
-    det_midi = int(round(12 * math.log2(det_hz / 440) + 69)) if det_hz > MIN_HZ else -999
+    det_midi = (int(round(12 * math.log2(det_hz / 440) + 69))
+                if det_hz > MIN_HZ else -999)
 
-    col_cur = (C_OK  if app.note_match is True  else
-               C_ERR if app.note_match is False else C_WAIT)
+    col_cur = (T.GREEN if app.note_match is True else
+               T.RED if app.note_match is False else ACCENT)
 
     prev_midi = getattr(app.view, "preview_midi", None)
     prev_on = prev_midi is not None and getattr(app.view, "preview_timer", 0) > 0
 
-    # Pista del entrenador (H): ilumina la clase de tono objetivo
-    tr_hint_on = (getattr(app, "training_open", False)
-                  and getattr(app, "tr_hint", False)
-                  and getattr(app, "tr_target_midi", None) is not None)
+    prev_clip = app.screen.get_clip()
+    app.screen.set_clip(rect)
 
-    # Walking Lab: clase de tono del tiempo actual
-    lab_pc = None
-    if getattr(app, "lab_open", False) and getattr(app, "lab_steps", None):
-        try:
-            bar = app.lab_bar % len(app.lab_steps)
-            lab_pc = app.lab_steps[bar][app.lab_beat % 4]["midi"] % 12
-        except Exception:
-            lab_pc = None
-
-    # Corridos: clase de tono del tiempo actual (si suena)
-    cor_pc = None
-    if getattr(app, "cor_open", False) and getattr(app, "cor_steps", None):
-        try:
-            bar = app.cor_bar % len(app.cor_steps)
-            _m = app.cor_steps[bar][app.cor_beat % 3].get("midi")
-            cor_pc = _m % 12 if _m is not None else None
-        except Exception:
-            cor_pc = None
-
-    for key in app._piano_keys_list:
-        midi  = key["midi"]
-        rect  = key["rect"]
+    for key in _keys(app):
+        midi = key["midi"]
+        r = key["rect"]
         black = key["black"]
         is_cur = (midi == cur_midi)
         is_det = (midi == det_midi) and det_hz > MIN_HZ
         is_prev = prev_on and (midi == prev_midi)
-        is_lab = (lab_pc is not None and not (is_prev or is_cur or is_det)
-                  and (midi % 12) == lab_pc)
-        is_cor = (cor_pc is not None
-                  and not (is_prev or is_cur or is_det or is_lab)
-                  and (midi % 12) == cor_pc)
-        is_hint = (tr_hint_on
-                   and not (is_prev or is_cur or is_det or is_lab or is_cor)
-                   and (midi % 12) == (app.tr_target_midi % 12))
 
-        if is_prev:
-            color = C_ACCENT
-        elif is_lab:
-            color = C_ACCENT
-        elif is_cor:
-            color = C_ACCENT
-        elif is_cur:
-            color = col_cur
-        elif is_det:
-            color = C_BLUE
-        elif is_hint:
-            color = (150, 110, 255)
+        if is_cur:
+            fill = col_cur
+            edge = (180, 245, 255)
+        elif is_prev:
+            fill = ACCENT
+            edge = ACCENT
         elif black:
-            color = (20, 20, 30)
+            fill = (22, 25, 30)
+            edge = (44, 50, 60)
         else:
-            color = (215, 215, 225)
+            fill = (235, 238, 244)
+            edge = (206, 212, 222)
 
-        pygame.draw.rect(app.screen, color, rect)
-        if is_prev or is_lab or is_cor:
-            border = C_ACCENT
-        elif is_hint:
-            border = (200, 180, 255)
-        else:
-            border = (40, 40, 60) if black else (85, 85, 105)
-        pygame.draw.rect(app.screen, border, rect,
-                         2 if (is_prev or is_hint or is_lab or is_cor) else 1)
+        radius = max(2, int(4 * L.s)) if not black else max(1, int(2 * L.s))
+        pygame.draw.rect(app.screen, fill, r, border_radius=radius)
+        pygame.draw.rect(app.screen, edge[:3], r, 1, border_radius=radius)
 
-        if not black and midi % 12 == 0:
-            oct_n = midi // 12 - 1
-            lbl   = app.font_tiny.render(f"C{oct_n}", True,
-                                          (10, 10, 18) if (is_cur or is_det) else C_DGRAY)
-            app.screen.blit(lbl, (rect.x + 1, rect.bottom - 14))
+        if is_det and not is_cur:
+            pygame.draw.rect(app.screen, (60, 140, 220), r.inflate(-2, -2), 2,
+                             border_radius=radius)
 
-    pygame.draw.rect(app.screen, C_DGRAY, (px, py, pw, ph), 1)
+        # Etiquetas en teclas blancas: nota actual en cian, octavas clave en gris
+        if not black:
+            if is_cur:
+                note_name = cur.get("note_name", "C2") if cur else "C2"
+                T.text(app.screen, T.font(L.fs(9), bold=True), note_name, (10, 26, 32),
+                       (r.centerx, r.bottom - int(4 * L.s)), "midbottom")
+            elif midi in (28, 36, 48, 60, 63):
+                # Etiquetas E1, C2, C3, C4 + Eb4 de referencia
+                names = {28: "E1", 36: "C2", 48: "C3", 60: "C4", 63: "Eb4"}
+                T.text(app.screen, T.font(L.fs(8)), names[midi], (100, 106, 116),
+                       (r.centerx, r.bottom - int(3 * L.s)), "midbottom")
+    app.screen.set_clip(prev_clip)
+
+    pygame.draw.rect(app.screen, (48, 50, 53), rect, 1,
+                     border_radius=max(4, int(6 * L.s)))
+
+    # Nombre de la nota pulsada
     if prev_on:
-        lbl_p = app.font_small.render(
-            f"{app.view.preview_name}  ·  {app.view.preview_label}  (clic otra tecla)",
-            True, C_ACCENT)
-    else:
-        lbl_p = app.font_tiny.render(
-            f"PIANO  E1–Eb4  (midi {PIANO_START_MIDI}–{PIANO_END_MIDI} · clic = oír nota)",
-            True, C_GRAY)
-    app.screen.blit(lbl_p, (px + 4, py - 13))
+        lbl = f"{app.view.preview_name}  ·  {app.view.preview_label}"
+        T.text(app.screen, T.font(L.fs(9), bold=True),
+               T.fit(T.font(L.fs(9)), lbl, card.w - int(24 * L.s)), ACCENT,
+               (card.centerx, card.bottom - int(6 * L.s)), "midbottom")

@@ -1,282 +1,211 @@
 """
-Dibuja el mástil del bajo (zona NECK).
+Mini-mástil horizontal (tarjeta inferior izquierda).
+
+Muestra el mapa de la canción sobre las cuatro cuerdas, la nota que toca
+ahora y la que detecta el micrófono. Sigue siendo clicable para oír notas
+y para el modo mapa (H).
 """
 import math
 
 import pygame
 
-from ..config import (
-    C_ACCENT,
-    C_BLUE,
-    C_DGRAY,
-    C_DOT,
-    C_ERR,
-    C_FRET,
-    C_GRAY,
-    C_NUT,
-    C_OK,
-    C_WAIT,
-    C_WHITE,
-    C_WOOD,
-    C_WOOD2,
-    MIN_HZ,
-    NECK_AREA_W,
-    NECK_AREA_X,
-    NECK_DOT_FRETS,
-    NECK_FRETS,
-    NECK_H,
-    NECK_LABEL_W,
-    NECK_NUT_X,
-    NECK_OCT_FRETS,
-    NECK_W,
-    NECK_Y,
-    STRING_COLORS,
-    STRING_NAMES,
-    STRING_THICK,
-)
+from ..config import MIN_HZ, STRING_NAMES
+from . import theme as T
+from .theme import ACCENT, TEXT, TEXT_DIM, TEXT_MUTED
+from .draw_shell import _next_note, string_color
+
+FRETS = 13
+
+
+def fret_x(L, fret: int) -> int:
+    area = L.neck_area
+    x0 = area.x + int(6 * L.s)
+    x1 = area.right - int(6 * L.s)
+    return int(x0 + (x1 - x0) * (fret / FRETS))
+
+
+def _pitch_state(app):
+    """(texto, color, cents) del detector de pitch."""
+    with app.pitch_lock:
+        hz = app.stable_hz
+        note = app.stable_note
+    cur = app.current_note()
+    if hz <= MIN_HZ:
+        return "", (110, 116, 126), None
+    cents = None
+    if cur and cur.get("hz", 0) > 0:
+        try:
+            cents = 1200.0 * math.log2(hz / cur["hz"])
+            while cents > 600:
+                cents -= 1200
+            while cents < -600:
+                cents += 1200
+        except Exception:
+            cents = None
+    if app.note_match is True:
+        col = T.GREEN
+    elif app.note_match is False:
+        col = T.RED
+    else:
+        col = ACCENT
+    txt = f"{note}  {hz:.1f} Hz"
+    if cents is not None:
+        txt += f"  {cents:+.0f}¢"
+    return txt, col, cents
 
 
 def draw_neck(app) -> None:
-    nx0 = 0
-    nw, nh = NECK_W, NECK_H
-    ny = NECK_Y
+    L = app.layout
+    card = L.neck
 
-    pygame.draw.rect(app.screen, C_WOOD, (nx0, ny, nw, nh))
-    for i in range(5):
-        yx = ny + 8 + i * 18
-        pygame.draw.line(app.screen, C_WOOD2, (nx0, yx), (nx0 + nw, yx), 1)
+    # Estado de pitch arriba a la derecha (la tarjeta la dibuja el armazón)
+    txt, col, cents = _pitch_state(app)
+    if txt:
+        f_val = T.font(L.fs(10), bold=True)
+        right = card.right - int(10 * L.s)
+        T.text(app.screen, f_val, txt, col, (right, card.y + int(9 * L.s)),
+               "topright")
+        if cents is not None:
+            bar_w = int(68 * L.s)
+            bar = pygame.Rect(right - bar_w, card.y + int(22 * L.s), bar_w,
+                              max(2, int(3 * L.s)))
+            pygame.draw.rect(app.screen, (48, 50, 53)[:3], bar,
+                             border_radius=bar.h // 2)
+            cx = bar.centerx + int(max(-1.0, min(1.0, cents / 50.0)) * bar.w / 2)
+            pygame.draw.circle(app.screen, col, (cx, bar.centery),
+                               max(2, int(2.5 * L.s)))
 
-    STR_MARG = 14
-    ss = (nh - STR_MARG * 2 - 16) / 3
-    STR_Y = {
-        1: ny + STR_MARG,
-        2: ny + STR_MARG + ss,
-        3: ny + STR_MARG + ss * 2,
-        4: ny + STR_MARG + ss * 3,
-    }
+    area = L.neck_area
+    T.inset(app.screen, area, radius=max(6, int(9 * L.s)))
 
-    fret_space = NECK_AREA_W / NECK_FRETS
+    # Trastes (0 a FRETS)
+    f_num = T.font(L.fs(8))
+    f_num_active = T.font(L.fs(8), bold=True)
+    cur = app.current_note() or _next_note(app)
+    cur_fret = cur.get("fret") if cur else None
 
-    def fret_bar_x(fret):
-        return NECK_AREA_X + (fret - 1) * fret_space + fret_space
+    # Celda del traste actual: apenas un velo, sin columna luminosa
+    if cur_fret is not None and 0 <= cur_fret <= FRETS:
+        xc = fret_x(L, cur_fret)
+        step = (area.w - int(12 * L.s)) / FRETS
+        half = max(8, int(step * 0.46))
+        band = pygame.Surface((half * 2, max(4, area.h - int(24 * L.s))),
+                              pygame.SRCALPHA)
+        pygame.draw.rect(band, (*string_color(cur.get("string")), 12),
+                         band.get_rect(), border_radius=max(4, int(6 * L.s)))
+        app.screen.blit(band, (xc - half, area.y + 6))
 
-    def note_x(fret):
-        if fret == 0:
-            return NECK_NUT_X - 9
-        return NECK_AREA_X + (fret - 1) * fret_space + fret_space * 0.5
+    for fret in range(0, FRETS + 1):
+        x = fret_x(L, fret)
+        if fret > 0:
+            pygame.draw.line(app.screen, (52, 58, 68),
+                             (x, area.y + 6), (x, area.bottom - int(12 * L.s)), 1)
+        is_cur_fret = (fret == cur_fret)
+        f_col = (232, 190, 74) if is_cur_fret else (108, 116, 128)
+        f_use = f_num_active if is_cur_fret else f_num
+        T.text(app.screen, f_use, str(fret), f_col,
+               (x, area.bottom - int(3 * L.s)), "midbottom")
 
-    for s in range(1, 5):
-        y   = int(STR_Y[s])
-        lbl = app.font_tiny.render(STRING_NAMES[s], True, STRING_COLORS[s])
-        app.screen.blit(lbl, (4, y - lbl.get_height() // 2))
+    # Cuerdas
+    f_str = T.font(L.fs(11), bold=True)
+    for s, y in L.neck_strings.items():
+        pygame.draw.line(app.screen, string_color(s),
+                         (area.x + int(5 * L.s), y),
+                         (area.right - int(4 * L.s), y),
+                         {4: 2, 3: 2, 2: 1, 1: 1}[s])
+        # Punto de cuerda al aire junto a la cejilla
+        pygame.draw.circle(app.screen, string_color(s),
+                           (area.x + int(5 * L.s), y), max(2, int(2.4 * L.s)))
+        # Ceja (traste 0) marcada con una barra clara
+        if s == 1:
+            pygame.draw.line(app.screen, (206, 212, 222),
+                             (area.x + int(3 * L.s), L.neck_strings[1] - 3),
+                             (area.x + int(3 * L.s), L.neck_strings[4] + 3), 2)
+        T.text(app.screen, f_str, STRING_NAMES[s], string_color(s),
+               (card.x + int(11 * L.s), y), "midleft")
 
-    pygame.draw.rect(app.screen, C_NUT, (NECK_NUT_X, ny + 4, 5, nh - 8))
+    cur = app.current_note() or _next_note(app)
 
-    for fret in range(1, NECK_FRETS + 1):
-        fx = fret_bar_x(fret)
-        if fx <= nx0 + nw:
-            pygame.draw.line(app.screen, C_FRET,
-                             (int(fx), ny + 4), (int(fx), ny + nh - 18), 2)
+    # Mapa de la canción: puntos tenues de todas las posiciones usadas
+    if getattr(app.view, "neck_map", False) and app.notes:
+        from collections import Counter
+        freq = Counter((n["fret"], n["string"]) for n in app.notes)
+        mx = max(freq.values()) if freq else 1
+        for (fret, string), cnt in freq.items():
+            if not (0 <= fret <= FRETS) or string not in L.neck_strings:
+                continue
+            x = fret_x(L, fret)
+            y = L.neck_strings[string]
+            r = max(2, (3 + 3 * cnt / mx) * L.s)
+            T.dot(app.screen, (x, y), r, (78, 84, 96))
+            T.dot(app.screen, (x, y), max(1, r - 1.4 * L.s),
+                  string_color(string))
+    else:
+        # Posiciones usadas por la canción: marcas mínimas, casi invisibles,
+        # para no ensuciar el mástil (la referencia va limpia).
+        if app.notes:
+            bar16 = max(4, int(getattr(app, "beats_per_bar", 4) or 4) * 4)
+            lo = app.beat_time - bar16
+            hi = app.beat_time + bar16 * 2
+            for n in app.notes:
+                fret = n["fret"]
+                if not (0 <= fret <= FRETS) or n["string"] not in L.neck_strings:
+                    continue
+                x = fret_x(L, fret)
+                y = L.neck_strings[n["string"]]
+                near = (lo <= n["start16"] <= hi)
+                T.dot(app.screen, (x, y), max(1.1, (2.0 if near else 1.4) * L.s),
+                      (128, 136, 150) if near else (44, 50, 60))
 
-    num_y = ny + nh - 12
-    for fret in range(0, NECK_FRETS + 1):
-        xc = int(note_x(fret))
-        if xc < nx0 + nw - 4:
-            lbl = app.font_tiny.render(str(fret), True, C_FRET)
-            app.screen.blit(lbl, (xc - lbl.get_width() // 2, num_y))
+    # Nota actual: orbe con el color de su cuerda y núcleo blanco
+    active_cur = cur if cur else {"fret": 0, "string": 3}
+    if active_cur and 0 <= active_cur.get("fret", 0) <= FRETS:
+        afret = active_cur.get("fret", 0)
+        astring = active_cur.get("string", 3)
+        x = fret_x(L, afret)
+        y = L.neck_strings.get(astring, area.centery)
+        colc = string_color(astring)
+        # Capa de halo luminoso (bloom)
+        rr = max(16, int(24 * L.s))
+        surf_bloom = pygame.Surface((rr * 2, rr * 2), pygame.SRCALPHA)
+        for k, a in ((rr, 26), (int(rr * 0.62), 66), (int(rr * 0.36), 120)):
+            pygame.draw.circle(surf_bloom, (*colc, a), (rr, rr), k)
+        app.screen.blit(surf_bloom, (x - rr, y - rr))
+        pygame.draw.circle(app.screen, colc, (x, y), max(5, int(6.5 * L.s)))
+        pygame.draw.circle(app.screen, (255, 253, 238), (x, y),
+                           max(2, int(2.2 * L.s)))
 
-    for fret in NECK_DOT_FRETS:
-        xc = int(note_x(fret))
-        yc = int((STR_Y[2] + STR_Y[3]) / 2)
-        if xc < nx0 + nw - 4:
-            pygame.draw.circle(app.screen, C_DOT, (xc, yc), 5)
-    for fret in NECK_OCT_FRETS:
-        xc = int(note_x(fret))
-        y1 = int((STR_Y[1] + STR_Y[2]) / 2)
-        y2 = int((STR_Y[3] + STR_Y[4]) / 2)
-        if xc < nx0 + nw - 4:
-            pygame.draw.circle(app.screen, C_DOT, (xc, y1), 5)
-            pygame.draw.circle(app.screen, C_DOT, (xc, y2), 5)
-
-    for s in range(1, 5):
-        y    = int(STR_Y[s])
-        col  = STRING_COLORS[s]
-        tick = STRING_THICK[s]
-        pygame.draw.line(app.screen, col,
-                         (NECK_NUT_X + 5, y), (nx0 + nw - 6, y), tick)
-        pygame.draw.line(app.screen, col,
-                         (nx0 + NECK_LABEL_W, y), (NECK_NUT_X, y), tick)
-
-    cur = app.current_note()
-    if cur:
-        xc = int(note_x(cur["fret"]))
-        yc = int(STR_Y[cur["string"]])
-        if xc <= nx0 + nw - 4:
-            col_c = (C_OK  if app.note_match is True  else
-                     C_ERR if app.note_match is False else C_WAIT)
-            pulse = 0.5 + 0.5 * math.sin(app._t * 8)
-            hr    = int(11 + pulse * 4)
-            hs    = pygame.Surface((hr * 2, hr * 2), pygame.SRCALPHA)
-            pygame.draw.circle(hs, (*col_c, 75), (hr, hr), hr)
-            app.screen.blit(hs, (xc - hr, yc - hr))
-            pygame.draw.circle(app.screen, col_c, (xc, yc), 11)
-            txt = app.font_small.render(str(cur["fret"]), True, (10, 10, 18))
-            app.screen.blit(txt, (xc - txt.get_width() // 2,
-                                   yc - txt.get_height() // 2))
-
+    # Nota detectada por el micrófono
     with app.pitch_lock:
         det_hz = app.stable_hz
     if det_hz > MIN_HZ:
         best = app._hz_to_fret_string(det_hz)
-        if best:
-            df, ds = best
-            xc = int(note_x(df))
-            yc = int(STR_Y[ds])
-            if xc <= nx0 + nw - 4:
-                pygame.draw.circle(app.screen, C_BLUE, (xc, yc), 9, 2)
+        if best and best[1] in L.neck_strings and 0 <= best[0] <= FRETS:
+            x = fret_x(L, best[0])
+            y = L.neck_strings[best[1]]
+            pygame.draw.circle(app.screen, ACCENT, (x, y),
+                               max(4, int(5 * L.s)), max(1, int(2 * L.s)))
 
-    pygame.draw.rect(app.screen, C_DGRAY, (nx0, ny, nw, nh), 1)
-    lbl_n = app.font_tiny.render("MASTIL DEL BAJO  (trastes 0–15 · clic = oír nota)", True, C_GRAY)
-    app.screen.blit(lbl_n, (nx0 + 4, ny - 13))
-
-    # ── Mapa de notas de la canción (H para activar) ──────────────────────────
-    if getattr(app.view, 'neck_map', False) and app.notes:
-        # Calcular qué (fret, string) aparecen en la canción y cuántas veces
-        from collections import Counter
-        freq = Counter((n['fret'], n['string']) for n in app.notes)
-        max_freq = max(freq.values()) if freq else 1
-
-        # Overlay semitransparente
-        ov = pygame.Surface((nw, nh), pygame.SRCALPHA)
-        ov.fill((0, 0, 0, 140))
-        app.screen.blit(ov, (nx0, ny))
-
-        # Redibujar las líneas de cuerdas encima del overlay
-        for s in range(1, 5):
-            y   = int(STR_Y[s])
-            col = STRING_COLORS[s]
-            tick = STRING_THICK[s]
-            pygame.draw.line(app.screen, col,
-                             (NECK_NUT_X + 5, y), (nx0 + nw - 6, y), tick)
-            pygame.draw.line(app.screen, col,
-                             (nx0 + NECK_LABEL_W, y), (NECK_NUT_X, y), tick)
-
-        # Dibujar círculos para cada (fret, string) usado
-        for (fret, string), cnt in freq.items():
-            xc = int(note_x(fret))
-            yc = int(STR_Y[string])
-            if xc > nx0 + nw - 4:
-                continue
-            # Radio proporcional a la frecuencia (mín 7, máx 13)
-            r = int(7 + 6 * (cnt / max_freq))
-            col = STRING_COLORS[string]
-            # Fondo opaco para que sea visible
-            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), r)
-            pygame.draw.circle(app.screen, col, (xc, yc), r, 2)
-            # Número de traste
-            lbl = app.font_tiny.render(str(fret), True, col)
-            app.screen.blit(lbl, (xc - lbl.get_width() // 2,
-                                   yc - lbl.get_height() // 2))
-
-        # Etiqueta
-        lbl_m = app.font_tiny.render("MAPA CANCIÓN  (H=ocultar)", True, C_GRAY)
-        app.screen.blit(lbl_m, (nx0 + 4, ny - 13))
-    else:
-        # Etiqueta normal con sugerencia
-        lbl_n2 = app.font_tiny.render("  H=Mapa", True, C_DGRAY)
-        app.screen.blit(lbl_n2, (nx0 + 4 + lbl_n.get_width(), ny - 13))
-
-    # ── Walking Lab: molde del compás actual (círculos 1-4) ──────────
-    if getattr(app, "lab_open", False) and getattr(app, "lab_steps", None):
-        bar = app.lab_bar % len(app.lab_steps)
-        res = getattr(app, "lab_beat_res", [None] * 4)
-        running = getattr(app, "lab_running", False)
-        for i, stp in enumerate(app.lab_steps[bar]):
-            xc = int(note_x(stp["fret"]))
-            yc = int(STR_Y.get(stp["string"], 0))
-            if xc > nx0 + nw - 4 or stp["string"] not in STR_Y:
-                continue
-            cur = running and (i == app.lab_beat % 4)
-            r = res[i] if i < len(res) else None
-            if cur:
-                col, rad, wdt = C_ACCENT, 13, 3
-            elif r is True:
-                col, rad, wdt = C_OK, 11, 2
-            elif r is False:
-                col, rad, wdt = C_ERR, 11, 2
-            else:
-                col, rad, wdt = C_GRAY, 10, 2
-            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), rad)
-            pygame.draw.circle(app.screen, col, (xc, yc), rad, wdt)
-            num = app.font_small.render(str(i + 1), True, col)
-            app.screen.blit(num, (xc - num.get_width() // 2,
-                                   yc - num.get_height() // 2))
-            if cur:
-                nm = app.font_tiny.render(stp["name"], True, C_ACCENT)
-                app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 28))
-    # ── Corridos: bajeo del compás actual (tiempos 1-2-3) ──────────
-    if getattr(app, "cor_open", False) and getattr(app, "cor_steps", None):
-        bar = app.cor_bar % len(app.cor_steps)
-        res = getattr(app, "cor_beat_res", [None] * 3)
-        running = getattr(app, "cor_running", False)
-        for i, stp in enumerate(app.cor_steps[bar]):
-            if stp.get("fret") is None or stp.get("string") is None:
-                continue
-            xc = int(note_x(stp["fret"]))
-            yc = int(STR_Y.get(stp["string"], 0))
-            if xc > nx0 + nw - 4 or stp["string"] not in STR_Y:
-                continue
-            cur = running and (i == app.cor_beat % 3)
-            r = res[i] if i < len(res) else None
-            if cur:
-                col, rad, wdt = C_ACCENT, 13, 3
-            elif r is True:
-                col, rad, wdt = C_OK, 11, 2
-            elif r is False:
-                col, rad, wdt = C_ERR, 11, 2
-            else:
-                col, rad, wdt = C_GRAY, 10, 2
-            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), rad)
-            pygame.draw.circle(app.screen, col, (xc, yc), rad, wdt)
-            num = app.font_small.render(str(i + 1), True, col)
-            app.screen.blit(num, (xc - num.get_width() // 2,
-                                   yc - num.get_height() // 2))
-            if cur:
-                nm = app.font_tiny.render(stp["name"], True, C_ACCENT)
-                app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 28))
-    # ── Secuencias (X/A/V): objetivo actual en el mástil ──────────────
-    sp = getattr(app, "seq_pos", None)
-    if sp:
-        xc = int(note_x(sp[0]))
-        yc = int(STR_Y.get(sp[1], 0))
-        if xc <= nx0 + nw - 4 and sp[1] in STR_Y:
-            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), 12)
-            pygame.draw.circle(app.screen, C_WHITE, (xc, yc), 12, 2)
-            lb = app.font_tiny.render(getattr(app, "seq_label", ""),
-                                      True, C_WHITE)
-            app.screen.blit(lb, (xc - lb.get_width() // 2, yc - 28))
-
-    # ── Modo aprendizaje: nota pulsada con el ratón (encima de todo) ──
+    # Nota pulsada con el ratón
     prev = getattr(app.view, "preview_fret_str", None)
     if prev and getattr(app.view, "preview_timer", 0) > 0:
         pf, ps = prev
-        xc = int(note_x(pf))
-        yc = int(STR_Y.get(ps, 0))
-        if xc <= nx0 + nw - 4 and ps in STR_Y:
-            pygame.draw.circle(app.screen, C_ACCENT, (xc, yc), 13, 3)
-            pygame.draw.circle(app.screen, (20, 20, 35), (xc, yc), 10)
-            pygame.draw.circle(app.screen, C_ACCENT, (xc, yc), 10, 1)
-            nm = app.font_small.render(getattr(app.view, "preview_name", ""),
-                                        True, C_ACCENT)
-            app.screen.blit(nm, (xc - nm.get_width() // 2, yc - 30))
-            # Etiqueta completa (nota + traste + cuerda + Hz)
-            hz = getattr(app.view, "preview_hz", 0.0) or 0.0
-            full = f"{app.view.preview_label}  {hz:.1f} Hz" if hz else app.view.preview_label
-            fl = app.font_small.render(full, True, C_ACCENT)
-            bx = min(max(xc - fl.get_width() // 2, nx0 + 4), nx0 + nw - fl.get_width() - 4)
-            bg = pygame.Surface((fl.get_width() + 12, fl.get_height() + 6))
-            bg.fill((20, 20, 35))
-            app.screen.blit(bg, (bx - 6, ny - 34))
-            pygame.draw.rect(app.screen, C_ACCENT, (bx - 6, ny - 34,
-                             fl.get_width() + 12, fl.get_height() + 6), 1)
-            app.screen.blit(fl, (bx, ny - 31))
+        if ps in L.neck_strings and 0 <= pf <= FRETS:
+            x = fret_x(L, pf)
+            y = L.neck_strings[ps]
+            pygame.draw.circle(app.screen, ACCENT, (x, y),
+                               max(4, int(7 * L.s)), max(1, int(2 * L.s)))
+
+    # Pista de modo secuencia / entrenamiento
+    sp = getattr(app, "seq_pos", None)
+    if sp and sp[1] in L.neck_strings and 0 <= sp[0] <= FRETS:
+        x = fret_x(L, sp[0])
+        y = L.neck_strings[sp[1]]
+        pygame.draw.circle(app.screen, TEXT, (x, y),
+                           max(5, int(7 * L.s)), max(1, int(2 * L.s)))
+        lbl = getattr(app, "seq_label", "")
+        if lbl:
+            T.text(app.screen, T.font(L.fs(9), bold=True), lbl, TEXT,
+                   (x, y - int(12 * L.s)), "center")
+
+

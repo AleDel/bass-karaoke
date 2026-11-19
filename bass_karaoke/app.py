@@ -128,6 +128,9 @@ from .ui import (
     draw_tuner,
     draw_waveform_strip,
 )
+from .ui.layout import compute as compute_layout
+from .ui import theme as ui_theme
+from .ui import draw_shell
 
 FPS = 60
 
@@ -251,13 +254,15 @@ class BassKaraoke(
         pygame.display.set_caption("Bass Karaoke v3  –  Feet Don't Fail Me Now")
         self.clock = pygame.time.Clock()
         self.view = ViewState()
+        self.layout = compute_layout(W, H)
 
-        self.font_title = pygame.font.SysFont("consolas", 20, bold=True)
-        self.font_huge  = pygame.font.SysFont("consolas", 74, bold=True)
-        self.font_big   = pygame.font.SysFont("consolas", 30, bold=True)
-        self.font_med   = pygame.font.SysFont("consolas", 19, bold=True)
-        self.font_small = pygame.font.SysFont("consolas", 15)
-        self.font_tiny  = pygame.font.SysFont("consolas", 12)
+        self.font_title = ui_theme.font(16, bold=True)
+        self.font_huge  = ui_theme.font(58, bold=True)
+        self.font_big   = ui_theme.font(26, bold=True)
+        self.font_med   = ui_theme.font(16, bold=True)
+        self.font_small = ui_theme.font(13)
+        self.font_tiny  = ui_theme.font(11)
+        self.font_mono  = ui_theme.font(14, mono=True)
 
         # ── Estado ─────────────────────────────────────────────────────
         self.playback_state = PlaybackState()
@@ -764,6 +769,9 @@ class BassKaraoke(
     def _load_mp3(self, path=None):
         self._stop_mp3()
         self.mp3_path    = path
+        # El carril de audio de la partitura solo existe cuando hay MP3.
+        if getattr(self, "layout", None) is not None:
+            self._relayout(self.layout.w, self.layout.h)
         self._vsp        = VarispeedPlayer() if VARSPEED_OK else None
         self._pgm_loaded = False
         self._use_vsp    = False
@@ -905,26 +913,31 @@ class BassKaraoke(
     #  SCORE INIT
     # ══════════════════════════════════════════════════════════════════
     def _init_score_verovio(self):
-        if "verovio" in self.view._score_cache:
-            self.view._score_surf, self.view._score_note_xs = self.view._score_cache["verovio"]
+        h = max(60, int(self.layout.staff.h - 16 * self.layout.s))
+        key = f"verovio:{h}"
+        if key in self.view._score_cache:
+            self.view._score_surf, self.view._score_note_xs = self.view._score_cache[key]
             log.info("[Verovio] usando caché")
             return
-        surf, note_xs = init_score_surface(self.notes, self.musicxml_path)
+        surf, note_xs = init_score_surface(self.notes, self.musicxml_path, height=h)
         self.view._score_surf    = surf
         self.view._score_note_xs = note_xs
         if surf is not None:
-            self.view._score_cache["verovio"] = (surf, note_xs)
+            self.view._score_cache[key] = (surf, note_xs)
 
     def _init_score_music21(self):
-        if "music21" in self.view._score_cache:
-            self.view._score_surf, self.view._score_note_xs = self.view._score_cache["music21"]
+        h = max(60, int(self.layout.staff.h - 16 * self.layout.s))
+        key = f"music21:{h}"
+        if key in self.view._score_cache:
+            self.view._score_surf, self.view._score_note_xs = self.view._score_cache[key]
             log.info("[Music21] usando caché")
             return
-        surf, note_xs = init_score_surface_music21(self.notes, self.musicxml_path)
+        surf, note_xs = init_score_surface_music21(self.notes, self.musicxml_path,
+                                                  height=h)
         self.view._score_surf    = surf
         self.view._score_note_xs = note_xs
         if surf is not None:
-            self.view._score_cache["music21"] = (surf, note_xs)
+            self.view._score_cache[key] = (surf, note_xs)
 
     # ══════════════════════════════════════════════════════════════════
     #  AUDIO / PITCH
@@ -1645,26 +1658,23 @@ class BassKaraoke(
             mx, my = int(pos[0]), int(pos[1])
         except Exception:
             return None
-        if not (0 <= mx < NECK_W and NECK_Y <= my < NECK_Y + NECK_H):
+        L = self.layout
+        area = L.neck_area
+        if not area.collidepoint(mx, my):
             return None
-        STR_MARG = 14
-        ss = (NECK_H - STR_MARG * 2 - 16) / 3
-        str_y = {s: NECK_Y + STR_MARG + ss * (s - 1) for s in range(1, 5)}
-        # Cuerda más cercana (tolerancia ~ media distancia entre cuerdas)
         best_s, best_d = None, 1e9
-        for s, y in str_y.items():
+        for s, y in L.neck_strings.items():
             d = abs(my - y)
             if d < best_d:
                 best_d, best_s = d, s
-        if best_s is None or best_d > (ss * 0.6 + 4):
+        ss = max(6, (L.neck_strings.get(4, area.bottom) - L.neck_strings.get(1, area.y)) / 3)
+        if best_s is None or best_d > (ss * 0.62 + 4):
             return None
-        if mx < NECK_AREA_X:
-            fret = 0
-        else:
-            fret_space = NECK_AREA_W / max(1, NECK_FRETS)
-            fret = int((mx - NECK_AREA_X) // fret_space) + 1
-            fret = max(0, min(NECK_FRETS, fret))
-        return (fret, best_s)
+        from .ui.draw_neck import FRETS
+        x0 = area.x + int(6 * L.s)
+        x1 = area.right - int(6 * L.s)
+        fret = int(round((mx - x0) / max(1, (x1 - x0)) * FRETS))
+        return (max(0, min(FRETS, fret)), best_s)
 
     def _piano_hit(self, pos):
         """MIDI de la tecla bajo el cursor o None (las negras tienen prioridad)."""
@@ -1672,14 +1682,17 @@ class BassKaraoke(
             mx, my = int(pos[0]), int(pos[1])
         except Exception:
             return None
-        if not (PIANO_X <= mx < PIANO_X + PIANO_W
-                and PIANO_Y <= my < PIANO_Y + PIANO_H):
+        L = self.layout
+        rect = L.piano_keys
+        if not rect.collidepoint(mx, my):
             return None
-        if not self._piano_keys_list:
+        if not self._piano_keys_list or \
+                getattr(self, "_piano_keys_rect", None) != tuple(rect):
             from .ui import build_piano_keys
             self._piano_keys_list = build_piano_keys(
                 PIANO_START_MIDI, PIANO_END_MIDI,
-                PIANO_X, PIANO_Y, PIANO_W, PIANO_H)
+                rect.x, rect.y, rect.w, rect.h)
+            self._piano_keys_rect = tuple(rect)
         # Dos pasadas: primero negras (están encima), luego blancas
         for black_first in (True, False):
             for key in self._piano_keys_list:
@@ -2527,24 +2540,57 @@ class BassKaraoke(
             self._stop_mp3(fade_ms=200)
 
     # ══════════════════════════════════════════════════════════════════
+    #  VENTANA
+    # ══════════════════════════════════════════════════════════════════
+    def _relayout(self, w, h):
+        """Recalcula layout + cachés tipográficas para un tamaño dado."""
+        self.layout = compute_layout(w, h, with_audio=bool(getattr(self, "mp3_path", None)))
+        ui_theme.clear_cache()
+        self._piano_keys_list = []
+        return self.layout
+
+    def _on_resize(self, w, h):
+        """Recalcula el layout al cambiar el tamaño de la ventana."""
+        w, h = max(900, int(w)), max(620, int(h))
+        if (w, h) == (self.layout.w, self.layout.h):
+            return
+        try:
+            self.screen = pygame.display.set_mode((w, h), _WINDOW_FLAGS,
+                                                  vsync=1)
+        except (pygame.error, TypeError):
+            try:
+                self.screen = pygame.display.set_mode((w, h), _WINDOW_FLAGS)
+            except pygame.error:
+                self.screen = pygame.display.set_mode((w, h))
+        self._relayout(w, h)
+
+    # ══════════════════════════════════════════════════════════════════
     #  DRAW
     # ══════════════════════════════════════════════════════════════════
     def draw(self):
-        self.screen.fill(C_BG)
-        self._draw_header()
-        if self.view.chords_on and (self.chord_events or self.lyric_events):
-            draw_karaoke_strip(self)
-        draw_waveform_strip(self)
-        draw_tab(self)
-        draw_score(self)
-        draw_guitartab(self)
+        L = self.layout
+        size = self.screen.get_size()
+        if tuple(size) != (L.w, L.h):
+            L = self._relayout(size[0], size[1])
+
+        draw_shell.draw_background(self)
+        draw_shell.draw_header(self)
+        draw_shell.draw_gauge_card(self)
+        draw_shell.draw_chords_card(self)
+        draw_shell.draw_fretboard_card(self)
+
+        draw_score(self)          # tarjeta: pentagrama
+        if self.mp3_path:
+            draw_waveform_strip(self)  # carril de audio dentro de la tarjeta
+        draw_guitartab(self)      # tablatura numérica debajo
+
+        draw_shell.draw_instruments_card(self)
         draw_neck(self)
         draw_piano(self)
-        draw_note_panel(self)
-        draw_metronome(self)
-        draw_pitch_panel(self)
         draw_stats_panel(self)
-        draw_bottom_bar(self)
+        draw_shell.draw_transport(self)
+        draw_shell.draw_hints(self)
+
         draw_chord_editor_popup(self)
         if self.counting_down:
             draw_countdown(self)
@@ -2804,100 +2850,24 @@ class BassKaraoke(
         self.screen.blit(info, (x0, y0 + h + 16))
 
     def _draw_header(self):
-        pygame.draw.rect(self.screen, C_PANEL, (0, 0, W, HEADER_H))
-        pygame.draw.line(self.screen, C_ACCENT, (0, HEADER_H), (W, HEADER_H), 2)
-
-        ratio = self._speed_ratio()
-        speed_scaled = abs(ratio - 1.0) > 1e-6
-        scaled = ratio if speed_scaled else 1.0
-        mode_str = "BPM" if self.view.tempo_display_mode == "bpm" else "figuras"
-        bpm_t = self.font_med.render(
-            _fmt_tempo(self.tempo_map, scaled, self.view.tempo_display_mode),
-            True, C_ACCENT)
-        bpm_x = W - bpm_t.get_width() - 12
-
-        sc = None
-        sc_x = bpm_x
-        if self.score_total > 0:
-            pct = int(100 * self.score_ok / self.score_total)
-            col = C_GREEN if pct > 70 else C_RED if pct < 40 else C_ACCENT
-            sc  = self.font_med.render(f"{pct}% ok", True, col)
-            sc_x = bpm_x - sc.get_width() - 18
-
-        chips, chips_left = self._header_chips_layout()
-        for action, text, rect in chips:
-            hot = action == self.view.chip_hover
-            bg = C_ACCENT if hot else C_DGRAY
-            fg = C_BG    if hot else C_WHITE
-            pygame.draw.rect(self.screen, bg, rect, border_radius=5)
-            ct = self.font_tiny.render(text, True, fg)
-            self.screen.blit(ct, (rect.centerx - ct.get_width() // 2,
-                                  rect.centery - ct.get_height() // 2))
-
-        title_text = f"Bass Karaoke  –  {self.song_name or 'sin canción'}"
-        title = self.font_title.render(title_text, True, C_WHITE)
-        budget = chips_left - 24
-        while title.get_width() > budget and len(title_text) > 14:
-            title_text = title_text[:-2] + "…"
-            title = self.font_title.render(title_text, True, C_WHITE)
-        self.screen.blit(title, (12, 8))
-        self.screen.blit(bpm_t, (bpm_x, 8))
-        if sc:
-            self.screen.blit(sc, (sc_x, 8))
-
-        state = (">> TOCANDO" if self.playing else
-                 "|| PAUSA"   if self.score_total > 0 else "[] STOP")
-        st = self.font_tiny.render(state, True,
-                                   C_GREEN if self.playing else C_GRAY)
-        st_x = W - st.get_width() - 12
-        self.screen.blit(st, (st_x, 36))
-
-        if speed_scaled:
-            sub_str = (f"original: {_fmt_tempo(self.tempo_map, 1.0, self.view.tempo_display_mode)}"
-                       f"   x{ratio:.2f}")
-        else:
-            sub_str = f"original del tema   x{ratio:.2f}"
-        sub_t = self.font_tiny.render(
-            f"{sub_str}   [{mode_str}  B=alternar]", True, C_GRAY)
-        self.screen.blit(sub_t, (max(12, st_x - sub_t.get_width() - 14), 30))
-
-        off_col    = C_GRAY if self.mp3_offset_sec == 0 else C_BLUE
-        speed_str  = ""
-        if self._vsp and self._vsp.loaded:
-            stretch_lbl = "  (estirando…)" if self._vsp.stretching else ""
-            speed_str   = f"  x{self._speed_ratio():.2f}{stretch_lbl}"
-        engine_str = f"  [{getattr(self, 'pitch_engine', 'aubio')}]"
-        # Estados con su tecla: se ve qué está activo y cómo cambiarlo.
-        cd_str = "C:countdown ON" if self.countdown_enabled else "C:countdown OFF"
-        metro_str = "N:metro ON" if self.metro_sound else "N:metro OFF"
-        mute_str = " · M:MUTE" if self.muted else ""
-        bass_str = " · bajo:OFF" if self.muted_bass else ""
-        band_str = " · banda:OFF" if self.muted_band else ""
-        off_t      = self.font_tiny.render(
-            f"offset: {self.mp3_offset_sec:+.2f}s{speed_str}{engine_str}"
-            f"   {cd_str} · {metro_str}{mute_str}{bass_str}{band_str}   F2:mixer",
-            True, off_col)
-        self.screen.blit(off_t, (12, 36))
+        """Cabecera de la referencia: estado, título centrado y acciones."""
+        draw_shell.draw_header(self)
 
     def _header_chips_layout(self):
-        """Chips alineados a la derecha, justo antes del tempo y del score."""
-        ratio = self._speed_ratio()
-        scaled = ratio if abs(ratio - 1.0) > 1e-6 else 1.0
-        bpm_w = self.font_med.size(
-            _fmt_tempo(self.tempo_map, scaled,
-                       self.view.tempo_display_mode))[0]
-        right = W - bpm_w - 12 - 18
-        if self.score_total > 0:
-            pct = int(100 * self.score_ok / self.score_total)
-            right -= self.font_med.size(f"{pct}% ok")[0] + 18
+        """Píldoras de acción alineadas a la derecha de la cabecera."""
+        L = self.layout
+        f = ui_theme.font(L.fs(11))
+        pad = int(16 * L.s)
+        gap = int(7 * L.s)
+        h = int(24 * L.s)
+        x = L.w - L.pad
         items = []
-        x = right
         for action, label, key in reversed(_HEADER_CHIPS):
-            text = f"{label} {key}"
-            w = self.font_tiny.size(text)[0] + _CHIP_PAD
+            w = f.size(label)[0] + pad * 2
             x -= w
-            items.append((action, text, pygame.Rect(x, 5, w, _CHIP_H)))
-            x -= _CHIP_GAP
+            items.append((action, label,
+                          pygame.Rect(x, (L.header.h - h) // 2, w, h)))
+            x -= gap
         items.reverse()
         return items, x
 
@@ -3144,18 +3114,39 @@ class BassKaraoke(
         self.chord_bar_sugg_cache = self._chord_bar_suggestions()
         self.chord_bar_sugg_idx   = -1
 
+    def _chord_bar_select_current(self):
+        """Selecciona el compás que suena al pulsar la tarjeta de acordes."""
+        cells = self._chord_bar_cells()
+        if not cells:
+            self.chord_bar_msg = "Sin compases para editar"
+            return
+        sec = float(self._song_seconds(float(self.beat_time)))
+        idx = 0
+        for i, cell in enumerate(cells):
+            if cell[5] <= sec + 1e-6:
+                idx = i
+        self.chord_bar_typing = False
+        self.chord_bar_buf = ""
+        self.chord_bar_target_sec = None
+        self.chord_bar_target_end_sec = None
+        self.chord_bar_sugg_idx = -1
+        self.chord_bar_sugg_cache = []
+        self.chord_bar_replace = False
+        self.chord_bar_sel_measure = idx
+        self.chord_bar_msg = (f"Compás {cells[idx][1]} seleccionado "
+                              "· Enter/T editar · Supr sin acorde")
+
     def chord_bar_sugg_layout(self):
-        """[(nombre, rect)] del desplegable de acordes sobre la barra."""
-        from .ui.draw_karaoke import CURSOR_X
+        """[(nombre, rect)] del desplegable de acordes, bajo la tarjeta."""
+        L = self.layout
         cell = self._chord_bar_selected_cell()
         sugg = list(self.chord_bar_sugg_cache or ())
         if cell is None or not sugg:
             return []
-        _i, _num, _raw, v0, _v1, _s0, _s1, _name, _ch = cell
-        x = int(self.px_of(v0) - self.view.viewport_x + CURSOR_X)
-        x = max(6, min(x, W - 190))
-        y = KARAOKE_Y + KARAOKE_H
-        return [(name, pygame.Rect(x, y + k * 20, 184, 20))
+        x = L.chords.centerx - 92
+        y = L.chords.bottom + int(4 * L.s)
+        h = max(16, int(20 * L.s))
+        return [(name, pygame.Rect(x, y + k * h, 184, h))
                 for k, name in enumerate(sugg)]
 
     def _chord_bar_edit_selected(self):
@@ -3330,6 +3321,12 @@ class BassKaraoke(
         """
         if event.type == pygame.QUIT:
             return False
+        if event.type == getattr(pygame, "VIDEORESIZE", 16):
+            self._on_resize(event.w, event.h)
+            return True
+        if event.type == getattr(pygame, "WINDOWRESIZED", -1):
+            self._on_resize(event.x, event.y)
+            return True
         if event.type == pygame.KEYDOWN:
             return self._on_keydown(event)
         if event.type == pygame.MOUSEBUTTONDOWN:

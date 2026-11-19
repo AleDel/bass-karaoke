@@ -91,10 +91,10 @@ PESTO_ONNX_PATH = str(_BASE_DIR / "models" / "mir-1k_g7_44100_512.onnx")
 STRING_OPEN_HZ = {4: 41.20, 3: 55.00, 2: 73.42, 1: 98.00}
 STRING_NAMES   = {4: "E", 3: "A", 2: "D", 1: "G"}
 STRING_COLORS  = {
-    4: (255,  90,  90),
-    3: (255, 200,  70),
-    2: ( 80, 185, 255),
-    1: (120, 255, 140),
+    4: (239,  68,  68),   # E — #EF4444
+    3: (245, 158,  11),   # A — #F59E0B
+    2: (  6, 182, 212),   # D — #06B6D4
+    1: ( 16, 185, 129),   # G — #10B981
 }
 STRING_THICK = {4: 3, 3: 2, 2: 1, 1: 1}
 
@@ -108,7 +108,9 @@ NECK_DOT_FRETS  = {3, 5, 7, 9, 15}
 NECK_OCT_FRETS  = {12}
 
 # ─── UI: dimensiones principales ─────────────────────────────────────────────
-W, H = 1280, 860
+# Lienzo lógico de diseño: la ventana es redimensionable y SDL lo escala
+# manteniendo el aspecto, así que todo se dibuja en estas coordenadas.
+W, H = 1440, 900
 FPS  = 60
 
 HEADER_H  = 55
